@@ -1,0 +1,251 @@
+import Vue from 'vue';
+import Vuex from 'vuex';
+import apiClient from '@/services/api';
+
+Vue.use(Vuex);
+
+// Helper untuk mengekstrak array/object baik jika Laravel membungkusnya dengan key .data maupun tidak
+const extractData = (res) => (res.data && res.data.data !== undefined ? res.data.data : res.data);
+
+export default new Vuex.Store({
+  state: {
+    token: localStorage.getItem('token') || null,
+    user: JSON.parse(localStorage.getItem('user') || 'null'),
+    platform: 'Offline Store',
+    carts: [],
+    categories: ['Semua'],
+    rawMaterials: [],
+    products: [],
+    promotions: [],
+    orders: [],
+    cashflows: [],
+    setting: {
+      store_name: 'Memuat Toko...',
+      location_store: '',
+      contact: '',
+      logo_path_url: '',
+      tax: 11,
+      receipt_width: '58 mm',
+      receipt_footer: 'Terima kasih telah berbelanja',
+    },
+  },
+  getters: {
+    isAuthenticated: (s) => !!s.token,
+    user: (s) => s.user,
+    platform: (s) => s.platform,
+    carts: (s) => s.carts,
+    products: (s) => s.products,
+    categories: (s) => s.categories,
+    rawMaterials: (s) => s.rawMaterials,
+    promotions: (s) => s.promotions,
+    orders: (s) => s.orders,
+    cashflows: (s) => s.cashflows,
+    setting: (s) => s.setting,
+    totalQuantity: (s) => s.carts.reduce((sum, i) => sum + i.quantity, 0),
+    totalPrice: (s) => s.carts.reduce((sum, i) => sum + i.activePrice * i.quantity, 0),
+  },
+  mutations: {
+    SET_AUTH(state, { token, user }) {
+      state.token = token;
+      state.user = user;
+      if (token) {
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user || {}));
+      } else {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+    },
+    SET_POS_DATA(state, { products, categories, setting, promotions, rawMaterials }) {
+      if (products) {
+        // Normalisasi struktur produk agar kompatibel dengan template frontend
+        state.products = products.map((p) => ({
+          ...p,
+          title: p.title || p.name || '',
+          category: typeof p.category === 'object' && p.category !== null ? p.category.name : (p.category || 'Umum'),
+          price: Number(p.price || 0),
+          cost_price: Number(p.cost_price || 0),
+          stock: p.stock !== null && p.stock !== undefined ? Number(p.stock) : null,
+        }));
+      }
+      if (categories) {
+        const catNames = categories.map((c) => (typeof c === 'object' ? c.name : c));
+        state.categories = ['Semua', ...new Set(catNames)];
+      }
+      if (setting && typeof setting === 'object') {
+        state.setting = { ...state.setting, ...setting };
+      }
+      if (promotions) state.promotions = promotions;
+      if (rawMaterials) state.rawMaterials = rawMaterials;
+    },
+    SET_ORDERS(state, orders) {
+      state.orders = orders;
+    },
+    SET_CASHFLOWS(state, cashflows) {
+      state.cashflows = cashflows;
+    },
+    SET_PLATFORM(state, platform) {
+      state.platform = platform;
+      state.carts.forEach((c) => {
+        const prod = state.products.find((p) => p.id === c.id);
+        if (prod) c.activePrice = (prod.platformPrices && prod.platformPrices[platform]) || prod.price;
+      });
+    },
+    ADD_CART(state, product) {
+      const activePrice = (product.platformPrices && product.platformPrices[state.platform]) || product.price;
+      const existing = state.carts.find((i) => i.id === product.id);
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        state.carts.push({ ...product, activePrice, quantity: 1 });
+      }
+    },
+    REMOVE_CART(state, product) {
+      const idx = state.carts.findIndex((i) => i.id === product.id);
+      if (idx !== -1) {
+        if (state.carts[idx].quantity > 1) state.carts[idx].quantity -= 1;
+        else state.carts.splice(idx, 1);
+      }
+    },
+    CLEAR_CART(state) {
+      state.carts = [];
+    },
+    COMPLETE_ORDER(state, order) {
+      order.items.forEach((item) => {
+        const prod = state.products.find((p) => p.id === item.id);
+        if (!prod) return;
+        if (prod.type === 'Retail' && prod.stock !== null) {
+          prod.stock = Math.max(0, prod.stock - item.quantity);
+        } else if (prod.type === 'Resep' && prod.recipes) {
+          prod.recipes.forEach((r) => {
+            const rm = state.rawMaterials.find((m) => m.id === r.raw_material_id);
+            if (rm) rm.stock = Math.max(0, Number((rm.stock - r.qty_needed * item.quantity).toFixed(3)));
+          });
+        }
+      });
+      state.orders.unshift(order);
+      state.carts = [];
+    },
+    UPDATE_STOCK_OPNAME(state, { type, id, actualStock }) {
+      if (type === 'product') {
+        const p = state.products.find((i) => i.id === id);
+        if (p) p.stock = Number(actualStock);
+      } else {
+        const r = state.rawMaterials.find((i) => i.id === id);
+        if (r) r.stock = Number(actualStock);
+      }
+    },
+    ADD_PRODUCT(state, prod) { state.products.push(prod); },
+    DELETE_PRODUCT(state, id) { state.products = state.products.filter((p) => p.id !== id); },
+    ADD_RAW_MATERIAL(state, rm) { state.rawMaterials.push(rm); },
+    DELETE_RAW_MATERIAL(state, id) { state.rawMaterials = state.rawMaterials.filter((r) => r.id !== id); },
+    ADD_CASHFLOW(state, cf) { state.cashflows.unshift(cf); },
+    DELETE_CASHFLOW(state, id) { state.cashflows = state.cashflows.filter((c) => c.id !== id); },
+    ADD_PROMO(state, promo) { state.promotions.push(promo); },
+    DELETE_PROMO(state, id) { state.promotions = state.promotions.filter((p) => p.id !== id); },
+    UPDATE_SETTING(state, payload) { state.setting = { ...state.setting, ...payload }; },
+  },
+  actions: {
+    // 1. Autentikasi Login ke POST /api/login
+    async login({ commit, dispatch }, credentials) {
+      const res = await apiClient.post('/login', credentials);
+      const token = res.data.token || res.data.access_token || (res.data.data && res.data.data.token);
+      const user = res.data.user || (res.data.data && res.data.data.user) || null;
+      if (token) {
+        commit('SET_AUTH', { token, user });
+        await dispatch('fetchPosData');
+      }
+      return res.data;
+    },
+
+    async logout({ commit }) {
+      try {
+        await apiClient.post('/logout');
+      } catch (e) {
+        // Abaikan jika token sudah expired di server
+      } finally {
+        commit('SET_AUTH', { token: null, user: null });
+      }
+    },
+
+    // 2. Mengambil Data Utama Layar Kasir (Produk, Kategori, Setting, Promo, Bahan Baku)
+    async fetchPosData({ commit }) {
+      const [prodRes, catRes, setRes, promoRes, rawRes] = await Promise.all([
+        apiClient.get('/products'),
+        apiClient.get('/categories'),
+        apiClient.get('/settings'),
+        apiClient.get('/promotions').catch(() => ({ data: [] })),
+        apiClient.get('/raw-materials').catch(() => ({ data: [] })),
+      ]);
+
+      commit('SET_POS_DATA', {
+        products: extractData(prodRes),
+        categories: extractData(catRes),
+        setting: extractData(setRes),
+        promotions: extractData(promoRes),
+        rawMaterials: extractData(rawRes),
+      });
+    },
+
+    // 3. Mengirim Transaksi Pembayaran Kasir ke POST /api/payment-pos
+    async submitOrder({ commit }, orderPayload) {
+      const res = await apiClient.post('/payment-pos', orderPayload);
+      const savedOrder = extractData(res) || orderPayload;
+      commit('COMPLETE_ORDER', savedOrder);
+      return savedOrder;
+    },
+
+    // 4. Mengambil Riwayat Pesanan dari GET /api/orders
+    async fetchOrders({ commit }) {
+      const res = await apiClient.get('/orders');
+      commit('SET_ORDERS', extractData(res));
+    },
+
+    // 5. CRUD Produk, Bahan Baku, Cashflow, Promo, & Pengaturan ke Database
+    async createProduct({ commit }, payload) {
+      const res = await apiClient.post('/products', payload);
+      commit('ADD_PRODUCT', extractData(res));
+    },
+    async removeProduct({ commit }, id) {
+      await apiClient.delete(`/products/${id}`);
+      commit('DELETE_PRODUCT', id);
+    },
+    async submitStockOpname({ commit }, { type, id, actualStock }) {
+      const endpoint = type === 'product' ? `/products/${id}/opname` : `/raw-materials/${id}/opname`;
+      await apiClient.post(endpoint, { actual_stock: actualStock, stock: actualStock });
+      commit('UPDATE_STOCK_OPNAME', { type, id, actualStock });
+    },
+    async createRawMaterial({ commit }, payload) {
+      const res = await apiClient.post('/raw-materials', payload);
+      commit('ADD_RAW_MATERIAL', extractData(res));
+    },
+    async removeRawMaterial({ commit }, id) {
+      await apiClient.delete(`/raw-materials/${id}`);
+      commit('DELETE_RAW_MATERIAL', id);
+    },
+    async fetchCashflows({ commit }) {
+      const res = await apiClient.get('/cashflows');
+      commit('SET_CASHFLOWS', extractData(res));
+    },
+    async createCashflow({ commit }, payload) {
+      const res = await apiClient.post('/cashflows', payload);
+      commit('ADD_CASHFLOW', extractData(res));
+    },
+    async removeCashflow({ commit }, id) {
+      await apiClient.delete(`/cashflows/${id}`);
+      commit('DELETE_CASHFLOW', id);
+    },
+    async createPromo({ commit }, payload) {
+      const res = await apiClient.post('/promotions', payload);
+      commit('ADD_PROMO', extractData(res));
+    },
+    async removePromo({ commit }, id) {
+      await apiClient.delete(`/promotions/${id}`);
+      commit('DELETE_PROMO', id);
+    },
+    async saveSettings({ commit }, payload) {
+      const res = await apiClient.post('/settings', payload);
+      commit('UPDATE_SETTING', extractData(res) || payload);
+    },
+  },
+});
