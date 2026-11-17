@@ -7,7 +7,7 @@
       </div>
       <div>
         <v-btn outlined rounded class="mr-2 white" @click="dialogCat = true">Kategori</v-btn>
-        <v-btn color="#0f4c3a" dark rounded depressed @click="dialogAdd = true">
+        <v-btn color="#0f4c3a" dark rounded depressed @click="openAddDialog">
           <v-icon left small>mdi-plus</v-icon> Produk Baru
         </v-btn>
       </div>
@@ -43,21 +43,21 @@
               <div class="font-weight-bold">{{ p.title }}</div>
               <div class="caption grey--text">{{ p.sku || '-' }} · {{ p.unit || 'pcs' }}</div>
             </td>
-            <td>{{ p.category }}</td>
+            <td>{{ p.category ? p.category.name : '-' }}</td>
             <td>
               <v-chip
                 x-small
-                :color="p.type === 'Resep' ? 'purple lighten-5' : 'blue lighten-5'"
-                :class="p.type === 'Resep' ? 'purple--text' : 'blue--text'"
+                :color="p.product_type === 'resep' ? 'purple lighten-5' : 'blue lighten-5'"
+                :class="p.product_type === 'resep' ? 'purple--text' : 'blue--text'"
                 class="font-weight-bold"
               >
-                {{ p.type || 'Retail' }}
+                {{ p.product_type === 'resep' ? 'Resep' : 'Retail' }}
               </v-chip>
             </td>
             <td class="font-weight-bold">Rp {{ Number(p.price || 0).toLocaleString('id-ID') }}</td>
             <td>{{ p.stock !== null && p.stock !== undefined ? p.stock : '—' }}</td>
             <td class="text-right">
-              <v-btn v-if="p.type !== 'Resep'" text x-small @click="openOpname(p)">Opname</v-btn>
+              <v-btn v-if="p.product_type !== 'resep'" text x-small @click="openOpname(p)">Opname</v-btn>
               <v-btn
                 icon
                 x-small
@@ -83,13 +83,13 @@
 
         <div class="mb-3">
           <v-chip
-            v-for="cat in availableCategories"
-            :key="cat"
+            v-for="cat in categoriesList"
+            :key="cat.id"
             small
             class="mr-1 mb-1"
             color="grey lighten-3"
           >
-            {{ cat }}
+            {{ cat.name }}
           </v-chip>
         </div>
 
@@ -125,29 +125,40 @@
           <v-btn icon small :disabled="isSaving" @click="dialogAdd = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
 
-        <v-text-field v-model="form.sku" label="SKU (misal: MNM-05)" outlined dense class="rounded-lg"></v-text-field>
+        <v-text-field v-model="form.sku" label="SKU (kosongkan untuk auto-generate)" outlined dense class="rounded-lg"></v-text-field>
         <v-text-field v-model="form.title" label="Nama Produk" outlined dense class="rounded-lg"></v-text-field>
+        
+        <!-- Dropdown Kategori menggunakan ID -->
         <v-select
-          v-model="form.category"
-          :items="availableCategories"
+          v-model="form.category_id"
+          :items="categoriesList"
+          item-text="name"
+          item-value="id"
           label="Kategori"
           outlined
           dense
           class="rounded-lg"
         ></v-select>
+
         <v-text-field v-model="form.unit" label="Satuan (misal: pcs, cup, botol)" outlined dense class="rounded-lg"></v-text-field>
+        
+        <!-- Dropdown Tipe Produk dengan nilai lowercase ('retail' / 'resep') -->
         <v-select
-          v-model="form.type"
-          :items="['Retail', 'Resep']"
+          v-model="form.product_type"
+          :items="productTypes"
+          item-text="text"
+          item-value="value"
           label="Tipe Produk"
           outlined
           dense
           class="rounded-lg"
         ></v-select>
+
         <v-text-field v-model.number="form.cost_price" label="Harga Modal / HPP (Rp)" type="number" outlined dense class="rounded-lg"></v-text-field>
         <v-text-field v-model.number="form.price" label="Harga Jual Offline (Rp)" type="number" outlined dense class="rounded-lg"></v-text-field>
+        
         <v-text-field
-          v-if="form.type === 'Retail'"
+          v-if="form.product_type === 'retail'"
           v-model.number="form.stock"
           label="Stok Awal"
           type="number"
@@ -163,7 +174,7 @@
           rounded
           depressed
           :loading="isSaving"
-          :disabled="!form.title || form.price <= 0"
+          :disabled="!form.title || !form.category_id || form.price <= 0"
           @click="saveProduct"
         >
           Simpan Produk
@@ -221,31 +232,41 @@ export default {
     isSavingOpname: false,
     deletingId: null,
     errorMessage: '',
+    categoriesList: [], // Menyimpan daftar objek kategori dari database [{id, name, ...}]
+    productTypes: [
+      { text: 'Retail', value: 'retail' },
+      { text: 'Resep', value: 'resep' }
+    ],
     form: {
       sku: '',
       title: '',
-      category: '',
+      category_id: null,
       unit: 'pcs',
-      type: 'Retail',
+      product_type: 'retail',
       cost_price: 0,
       price: 0,
       stock: 10,
     },
   }),
   computed: {
-    ...mapGetters(['products', 'categories']),
-    availableCategories() {
-      const list = this.categories.filter((c) => c !== 'Semua');
-      return list.length > 0 ? list : ['Minuman', 'Makanan', 'Snack', 'Produk Rumahan'];
-    },
+    ...mapGetters(['products']),
   },
   async created() {
+    await this.loadCategories();
     await this.loadProducts();
-    if (!this.form.category && this.availableCategories.length > 0) {
-      this.form.category = this.availableCategories[0];
-    }
   },
   methods: {
+    async loadCategories() {
+      try {
+        const response = await apiClient.get('/categories');
+        this.categoriesList = response.data.data || response.data || [];
+        if (this.categoriesList.length > 0 && !this.form.category_id) {
+          this.form.category_id = this.categoriesList[0].id;
+        }
+      } catch (err) {
+        console.error('Gagal memuat kategori:', err);
+      }
+    },
     async loadProducts() {
       this.isLoading = true;
       this.errorMessage = '';
@@ -261,14 +282,21 @@ export default {
         this.isLoading = false;
       }
     },
+    openAddDialog() {
+      // Pastikan kategori pertama terpilih secara default saat dialog dibuka
+      if (this.categoriesList.length > 0) {
+        this.form.category_id = this.categoriesList[0].id;
+      }
+      this.dialogAdd = true;
+    },
     async saveCategory() {
       this.isSavingCat = true;
       this.errorMessage = '';
       try {
         await apiClient.post('/categories', { name: this.newCategoryName.trim() });
-        await this.$store.dispatch('fetchPosData');
         this.newCategoryName = '';
         this.dialogCat = false;
+        await this.loadCategories(); // Refresh list kategori
       } catch (err) {
         this.errorMessage =
           (err.response && err.response.data && err.response.data.message) ||
@@ -282,28 +310,34 @@ export default {
       this.errorMessage = '';
       try {
         const payload = {
-          ...this.form,
-          name: this.form.title,
-          stock: this.form.type === 'Resep' ? null : Number(this.form.stock),
-          price: Number(this.form.price),
+          sku: this.form.sku ? this.form.sku : '', // Jika kosong, backend akan auto-generate SKU
+          title: this.form.title,
+          category_id: this.form.category_id,
+          unit: this.form.unit,
+          product_type: this.form.product_type, // 'retail' atau 'resep'
           cost_price: Number(this.form.cost_price || 0),
+          price: Number(this.form.price),
+          stock: this.form.product_type === 'resep' ? 0 : Number(this.form.stock || 0),
         };
-        await this.$store.dispatch('createProduct', payload);
+
+        // Mengirim data langsung ke endpoint backend store
+        await apiClient.post('/products', payload);
         await this.$store.dispatch('fetchPosData');
+        
         this.dialogAdd = false;
         this.form = {
           sku: '',
           title: '',
-          category: this.availableCategories[0] || 'Minuman',
+          category_id: this.categoriesList[0]?.id || null,
           unit: 'pcs',
-          type: 'Retail',
+          product_type: 'retail',
           cost_price: 0,
           price: 0,
           stock: 10,
         };
       } catch (err) {
         this.errorMessage =
-          (err.response && err.response.data && err.response.data.message) ||
+          (err.response && err.response.data && (err.response.data.message || JSON.stringify(err.response.data))) ||
           'Gagal menyimpan produk baru ke database.';
       } finally {
         this.isSaving = false;
@@ -313,7 +347,8 @@ export default {
       this.deletingId = id;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('removeProduct', id);
+        await apiClient.delete(`/products/${id}`);
+        await this.$store.dispatch('fetchPosData');
       } catch (err) {
         this.errorMessage = 'Gagal menghapus produk dari database.';
       } finally {
@@ -329,11 +364,10 @@ export default {
       this.isSavingOpname = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('submitStockOpname', {
-          type: 'product',
-          id: this.opnameTarget.id,
-          actualStock: this.actualStock,
+        await apiClient.post(`/products/${this.opnameTarget.id}/stock-opname`, {
+          actual_stock: this.actualStock,
         });
+        await this.$store.dispatch('fetchPosData');
         this.dialogOpname = false;
       } catch (err) {
         this.errorMessage = 'Gagal memperbarui stok opname ke database.';

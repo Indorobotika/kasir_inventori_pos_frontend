@@ -36,19 +36,19 @@
         <v-col cols="12" md="4">
           <v-sheet color="#1d5b49" class="pa-4 rounded-xl">
             <div class="caption grey--text text--lighten-2">PENDAPATAN HARI INI</div>
-            <div class="display-1 font-weight-bold amber--text mt-3">Rp {{ todayOmzet.toLocaleString('id-ID') }}</div>
+            <div class="display-1 font-weight-bold amber--text mt-3">Rp {{ todayData.revenue.toLocaleString('id-ID') }}</div>
           </v-sheet>
         </v-col>
         <v-col cols="12" md="4">
           <v-sheet color="#1d5b49" class="pa-4 rounded-xl">
             <div class="caption grey--text text--lighten-2">PESANAN ({{ period.toUpperCase() }})</div>
-            <div class="display-1 font-weight-bold amber--text mt-3">{{ completedOrders.length }}</div>
+            <div class="display-1 font-weight-bold amber--text mt-3">{{ kpiData.transactions }}</div>
           </v-sheet>
         </v-col>
         <v-col cols="12" md="4">
           <v-sheet color="#1d5b49" class="pa-4 rounded-xl">
             <div class="caption grey--text text--lighten-2">RATA-RATA / TRANSAKSI</div>
-            <div class="display-1 font-weight-bold amber--text mt-3">Rp {{ avgOrder.toLocaleString('id-ID') }}</div>
+            <div class="display-1 font-weight-bold amber--text mt-3">Rp {{ kpiData.avg_transaction.toLocaleString('id-ID') }}</div>
           </v-sheet>
         </v-col>
       </v-row>
@@ -59,29 +59,29 @@
       <v-col cols="12" md="6">
         <v-card flat outlined class="pa-4 rounded-xl white">
           <div class="caption grey--text font-weight-bold">PENJUALAN BERSIH</div>
-          <div class="headline font-weight-bold mt-1">Rp {{ netSales.toLocaleString('id-ID') }}</div>
-          <div class="caption grey--text">{{ completedOrders.length }} transaksi</div>
+          <div class="headline font-weight-bold mt-1">Rp {{ kpiData.net_sales.toLocaleString('id-ID') }}</div>
+          <div class="caption grey--text">{{ kpiData.transactions }} transaksi</div>
         </v-card>
       </v-col>
       <v-col cols="12" md="6">
         <v-card flat outlined class="pa-4 rounded-xl white">
           <div class="caption grey--text font-weight-bold">HARGA POKOK (HPP)</div>
-          <div class="headline font-weight-bold mt-1">Rp {{ totalHpp.toLocaleString('id-ID') }}</div>
-          <div class="caption grey--text">{{ totalItemsSold }} item terjual</div>
+          <div class="headline font-weight-bold mt-1">Rp {{ kpiData.hpp.toLocaleString('id-ID') }}</div>
+          <div class="caption grey--text">{{ kpiData.items_sold }} item terjual</div>
         </v-card>
       </v-col>
       <v-col cols="12" md="6">
         <v-card flat outlined class="pa-4 rounded-xl white">
           <div class="caption grey--text font-weight-bold">LABA KOTOR</div>
-          <div class="headline font-weight-bold teal--text text--darken-4 mt-1">Rp {{ grossProfit.toLocaleString('id-ID') }}</div>
+          <div class="headline font-weight-bold teal--text text--darken-4 mt-1">Rp {{ kpiData.gross_profit.toLocaleString('id-ID') }}</div>
           <div class="caption grey--text">Penjualan - HPP</div>
         </v-card>
       </v-col>
       <v-col cols="12" md="6">
         <v-card flat outlined class="pa-4 rounded-xl white">
           <div class="caption grey--text font-weight-bold">MARGIN</div>
-          <div class="headline font-weight-bold mt-1">{{ marginPercent }}%</div>
-          <div class="caption grey--text">Rata-rata Rp {{ avgOrder.toLocaleString('id-ID') }}/transaksi</div>
+          <div class="headline font-weight-bold mt-1">{{ kpiData.margin_percent }}%</div>
+          <div class="caption grey--text">Rata-rata Rp {{ kpiData.avg_transaction.toLocaleString('id-ID') }}/transaksi</div>
         </v-card>
       </v-col>
     </v-row>
@@ -93,15 +93,15 @@
       <div v-if="topProducts.length === 0" class="text-center py-4 grey--text body-2">
         Belum ada data penjualan pada periode ini.
       </div>
-      <div v-for="(item, idx) in topProducts" :key="item.title" class="d-flex justify-space-between align-center py-2">
+      <div v-for="(item, idx) in topProducts" :key="item.id || idx" class="d-flex justify-space-between align-center py-2">
         <div class="d-flex align-center">
           <v-avatar size="28" color="grey lighten-3" class="mr-3 caption font-weight-bold">{{ idx + 1 }}</v-avatar>
           <div>
             <div class="body-2 font-weight-bold">{{ item.title }}</div>
-            <div class="caption grey--text">{{ item.qty }} terjual · laba Rp {{ item.profit.toLocaleString('id-ID') }}</div>
+            <div class="caption grey--text">{{ Number(item.sold_qty || 0) }} terjual · laba Rp {{ Number(item.profit || 0).toLocaleString('id-ID') }}</div>
           </div>
         </div>
-        <div class="body-2 font-weight-bold">Rp {{ item.revenue.toLocaleString('id-ID') }}</div>
+        <div class="body-2 font-weight-bold">Rp {{ Number(item.revenue || 0).toLocaleString('id-ID') }}</div>
       </div>
     </v-card>
 
@@ -159,7 +159,6 @@
 </template>
 
 <script>
-import { mapGetters } from 'vuex';
 import apiClient from '@/services/api';
 
 export default {
@@ -168,104 +167,65 @@ export default {
     period: '30 hari',
     isLoading: false,
     errorMessage: '',
-    dashboardSummary: null,
+    analyticsData: null,
   }),
   computed: {
-    ...mapGetters(['orders', 'rawMaterials']),
     periodDays() {
       return parseInt(this.period, 10) || 30;
     },
-    completedOrders() {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - this.periodDays);
-      cutoff.setHours(0, 0, 0, 0);
-
-      return this.orders.filter((o) => {
-        if (o.status && o.status !== 'Selesai') return false;
-        const rawDate = o.date || o.created_at;
-        if (!rawDate) return true;
-        const orderDate = new Date(rawDate);
-        return !Number.isNaN(orderDate.getTime()) ? orderDate >= cutoff : true;
-      });
+    todayData() {
+      const today = this.analyticsData?.today || {};
+      return {
+        revenue: Number(today.revenue || 0),
+        orders: Number(today.orders || 0),
+        avg_basket: Number(today.avg_basket || 0),
+      };
     },
-    todayOmzet() {
-      if (this.dashboardSummary && this.dashboardSummary.today_omzet !== undefined) {
-        return Number(this.dashboardSummary.today_omzet);
-      }
-      const todayStr = new Date().toISOString().slice(0, 10);
-      return this.orders
-        .filter((o) => (!o.status || o.status === 'Selesai') && (o.date || o.created_at || '').slice(0, 10) === todayStr)
-        .reduce((s, o) => s + Number(o.total || 0), 0);
-    },
-    totalOmzet() {
-      return this.completedOrders.reduce((s, o) => s + Number(o.total || 0), 0);
-    },
-    netSales() {
-      return this.completedOrders.reduce((s, o) => s + (Number(o.subtotal || o.total || 0) - Number(o.discount || 0)), 0);
-    },
-    totalHpp() {
-      return this.completedOrders.reduce((s, o) => s + Number(o.hpp || 0), 0);
-    },
-    grossProfit() {
-      return this.netSales - this.totalHpp;
-    },
-    marginPercent() {
-      return this.netSales > 0 ? Math.round((this.grossProfit / this.netSales) * 100) : 0;
-    },
-    avgOrder() {
-      return this.completedOrders.length > 0 ? Math.round(this.totalOmzet / this.completedOrders.length) : 0;
-    },
-    totalItemsSold() {
-      return this.completedOrders.reduce(
-        (s, o) => s + (o.items || []).reduce((is, i) => is + Number(i.quantity || 0), 0),
-        0
-      );
+    kpiData() {
+      const kpi = this.analyticsData?.kpi || {};
+      return {
+        net_sales: Number(kpi.net_sales || 0),
+        transactions: Number(kpi.transactions || 0),
+        hpp: Number(kpi.hpp || 0),
+        items_sold: Number(kpi.items_sold || 0),
+        gross_profit: Number(kpi.gross_profit || 0),
+        margin_percent: Number(kpi.margin_percent || 0),
+        avg_transaction: Number(kpi.avg_transaction || 0),
+        total_bill: Number(kpi.total_bill || 0),
+      };
     },
     topProducts() {
-      const map = {};
-      this.completedOrders.forEach((o) => {
-        (o.items || []).forEach((i) => {
-          const title = i.title || i.name || 'Produk';
-          const qty = Number(i.quantity || 0);
-          const price = Number(i.price || 0);
-          const cost = Number(i.cost || i.cost_price || 0);
-          if (!map[title]) map[title] = { title, qty: 0, revenue: 0, profit: 0 };
-          map[title].qty += qty;
-          map[title].revenue += price * qty;
-          map[title].profit += (price - cost) * qty;
-        });
-      });
-      return Object.values(map).sort((a, b) => b.revenue - a.revenue);
+      return this.analyticsData?.top_products || [];
     },
     categoryBreakdown() {
-      const map = {};
-      this.completedOrders.forEach((o) => {
-        (o.items || []).forEach((i) => {
-          const cat = i.category || 'Lainnya';
-          map[cat] = (map[cat] || 0) + Number(i.price || 0) * Number(i.quantity || 0);
-        });
+      const list = this.analyticsData?.category_share || [];
+      const totalCategoryRev = list.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+
+      return list.map((item) => {
+        const rev = Number(item.revenue || 0);
+        return {
+          name: item.name,
+          revenue: rev,
+          percent: totalCategoryRev > 0 ? Math.round((rev / totalCategoryRev) * 100) : 0,
+        };
       });
-      return Object.entries(map).map(([name, revenue]) => ({
-        name,
-        revenue,
-        percent: this.netSales > 0 ? Math.round((revenue / this.netSales) * 100) : 0,
-      }));
     },
     paymentBreakdown() {
-      const map = {};
-      this.completedOrders.forEach((o) => {
-        const method = o.method || o.payment_method || 'Lainnya';
-        if (!map[method]) map[method] = { method, total: 0, count: 0 };
-        map[method].total += Number(o.total || 0);
-        map[method].count += 1;
+      const list = this.analyticsData?.payment_methods || [];
+      const totalPayment = list.reduce((sum, item) => sum + Number(item.total || 0), 0);
+
+      return list.map((item) => {
+        const total = Number(item.total || 0);
+        return {
+          method: item.payment_method || 'Lainnya',
+          total: total,
+          count: Number(item.count || 0),
+          percent: totalPayment > 0 ? Math.round((total / totalPayment) * 100) : 0,
+        };
       });
-      return Object.values(map).map((pm) => ({
-        ...pm,
-        percent: this.totalOmzet > 0 ? Math.round((pm.total / this.totalOmzet) * 100) : 0,
-      }));
     },
     lowStocks() {
-      return this.rawMaterials.filter((r) => Number(r.stock) <= Number(r.min_stock));
+      return this.analyticsData?.low_stocks || [];
     },
   },
   async created() {
@@ -276,16 +236,10 @@ export default {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        // Sinkronisasi pesanan & stok bahan baku terbaru dari backend + ringkasan dashboard
-        const [dashRes] = await Promise.all([
-          apiClient.get('/analytics/dashboard', { params: { days: this.periodDays } }).catch(() => null),
-          this.$store.dispatch('fetchOrders'),
-          this.$store.dispatch('fetchPosData'),
-        ]);
-
-        if (dashRes && dashRes.data) {
-          this.dashboardSummary = dashRes.data.data || dashRes.data;
-        }
+        const res = await apiClient.get('/analytics/dashboard', {
+          params: { days: this.periodDays },
+        });
+        this.analyticsData = res.data.data || res.data;
       } catch (err) {
         if (err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });

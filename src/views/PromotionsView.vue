@@ -28,22 +28,22 @@
         <v-card flat outlined class="pa-5 rounded-xl white">
           <div class="d-flex justify-space-between align-start">
             <div>
-              <div class="subtitle-1 font-weight-bold">{{ promo.title || promo.name }}</div>
+              <div class="subtitle-1 font-weight-bold">{{ promo.title }}</div>
               <div class="caption grey--text">
-                Min. belanja Rp {{ Number(promo.minSpend || promo.min_spend || 0).toLocaleString('id-ID') }}
+                Min. belanja Rp {{ Number(promo.required || 0).toLocaleString('id-ID') }}
               </div>
             </div>
             <v-chip
               x-small
-              :color="isPromoActive(promo) ? 'green lighten-4' : 'grey lighten-3'"
-              :class="isPromoActive(promo) ? 'green--text text--darken-3' : 'grey--text'"
+              :color="Number(promo.is_active) === 1 ? 'green lighten-4' : 'grey lighten-3'"
+              :class="Number(promo.is_active) === 1 ? 'green--text text--darken-3' : 'grey--text'"
               class="font-weight-bold"
             >
-              {{ isPromoActive(promo) ? 'Aktif' : 'Nonaktif' }}
+              {{ Number(promo.is_active) === 1 ? 'Aktif' : 'Nonaktif' }}
             </v-chip>
           </div>
           <div class="headline font-weight-bold teal--text text--darken-4 mt-4">
-            {{ promo.type === 'percent' ? `${Number(promo.value || 0)}%` : `Rp ${Number(promo.value || 0).toLocaleString('id-ID')}` }}
+            {{ Number(promo.typ_promotion_id) === 2 ? `${Number(promo.result || 0)}%` : `Rp ${Number(promo.result || 0).toLocaleString('id-ID')}` }}
           </div>
           <div class="text-right mt-2">
             <v-btn
@@ -69,15 +69,17 @@
 
         <v-text-field v-model="form.title" label="Judul Promo" outlined dense class="rounded-lg"></v-text-field>
         <v-select
-          v-model="form.type"
-          :items="[{ text: 'Persentase (%)', value: 'percent' }, { text: 'Nominal (Rp)', value: 'nominal' }]"
+          v-model="form.typ_promotion_id"
+          :items="[{ text: 'Persentase (%)', value: 2 }, { text: 'Nominal (Rp)', value: 1 }]"
+          item-text="text"
+          item-value="value"
           label="Jenis Diskon"
           outlined
           dense
           class="rounded-lg"
         ></v-select>
         <v-text-field
-          v-model.number="form.minSpend"
+          v-model.number="form.required"
           label="Minimal Belanja (Rp)"
           type="number"
           outlined
@@ -85,8 +87,8 @@
           class="rounded-lg"
         ></v-text-field>
         <v-text-field
-          v-model.number="form.value"
-          :label="form.type === 'percent' ? 'Nilai Diskon (%)' : 'Nilai Diskon (Rp)'"
+          v-model.number="form.result"
+          :label="form.typ_promotion_id === 2 ? 'Nilai Diskon (%)' : 'Nilai Diskon (Rp)'"
           type="number"
           outlined
           dense
@@ -100,7 +102,7 @@
           rounded
           depressed
           :loading="isSaving"
-          :disabled="!form.title.trim() || form.value <= 0"
+          :disabled="!form.title.trim() || form.result <= 0"
           @click="savePromo"
         >
           Simpan Promo
@@ -112,6 +114,7 @@
 
 <script>
 import { mapGetters } from 'vuex';
+import apiClient from '@/services/api';
 
 export default {
   name: 'PromotionsView',
@@ -121,7 +124,7 @@ export default {
     isSaving: false,
     deletingId: null,
     errorMessage: '',
-    form: { title: '', type: 'percent', minSpend: 50000, value: 10, active: true },
+    form: { title: '', typ_promotion_id: 2, required: 50000, result: 10, is_active: 1 },
   }),
   computed: {
     ...mapGetters(['promotions']),
@@ -130,9 +133,6 @@ export default {
     await this.loadPromos();
   },
   methods: {
-    isPromoActive(promo) {
-      return promo.active === undefined ? true : Boolean(Number(promo.active) || promo.active === true);
-    },
     async loadPromos() {
       this.isLoading = true;
       this.errorMessage = '';
@@ -154,17 +154,15 @@ export default {
       try {
         const payload = {
           title: this.form.title.trim(),
-          name: this.form.title.trim(),
-          type: this.form.type,
-          minSpend: Number(this.form.minSpend || 0),
-          min_spend: Number(this.form.minSpend || 0),
-          value: Number(this.form.value),
-          active: 1,
+          typ_promotion_id: Number(this.form.typ_promotion_id),
+          required: Number(this.form.required || 0),
+          result: Number(this.form.result || 0),
+          is_active: 1,
         };
-        await this.$store.dispatch('createPromo', payload);
+        await apiClient.post('/promotions', payload);
         await this.$store.dispatch('fetchPosData');
         this.dialog = false;
-        this.form = { title: '', type: 'percent', minSpend: 50000, value: 10, active: true };
+        this.form = { title: '', typ_promotion_id: 2, required: 50000, result: 10, is_active: 1 };
       } catch (err) {
         this.errorMessage =
           (err.response && err.response.data && err.response.data.message) ||
@@ -177,7 +175,8 @@ export default {
       this.deletingId = id;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('removePromo', id);
+        await apiClient.delete(`/promotions/${id}`);
+        await this.$store.dispatch('fetchPosData');
       } catch (err) {
         this.errorMessage = 'Gagal menghapus promo dari database.';
       } finally {

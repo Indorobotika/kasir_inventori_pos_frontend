@@ -67,9 +67,9 @@
             <td colspan="5" class="text-center py-8 grey--text">Belum ada catatan kas bulan ini.</td>
           </tr>
           <tr v-for="item in filteredCashflows" :key="item.id">
-            <td>{{ formatDate(item.date || item.created_at) }}</td>
+            <td>{{ formatDate(item.transaction_date || item.created_at) }}</td>
             <td>{{ item.category }}</td>
-            <td>{{ item.note || item.description || '-' }}</td>
+            <td>{{ item.description || '-' }}</td>
             <td class="text-right font-weight-bold" :class="item.type === 'IN' ? 'green--text' : 'red--text'">
               {{ item.type === 'IN' ? '+' : '-' }} Rp {{ Number(item.amount || 0).toLocaleString('id-ID') }}
             </td>
@@ -102,7 +102,7 @@
         </v-btn-toggle>
 
         <v-text-field
-          v-model="form.date"
+          v-model="form.transaction_date"
           label="Tanggal"
           type="date"
           outlined
@@ -126,7 +126,7 @@
           class="rounded-lg"
         ></v-text-field>
         <v-text-field
-          v-model="form.note"
+          v-model="form.description"
           label="Keterangan"
           outlined
           dense
@@ -152,6 +152,7 @@
 
 <script>
 import { mapGetters } from 'vuex';
+import apiClient from '@/services/api';
 
 export default {
   name: 'CashflowView',
@@ -164,10 +165,10 @@ export default {
     errorMessage: '',
     form: {
       type: 'OUT',
-      date: new Date().toISOString().slice(0, 10),
+      transaction_date: new Date().toISOString().slice(0, 10),
       category: '',
       amount: 0,
-      note: '',
+      description: '',
     },
   }),
   computed: {
@@ -175,7 +176,7 @@ export default {
     filteredCashflows() {
       if (!this.month) return this.cashflows;
       return this.cashflows.filter((item) => {
-        const itemDate = this.formatDate(item.date || item.created_at);
+        const itemDate = this.formatDate(item.transaction_date || item.created_at);
         return itemDate.startsWith(this.month);
       });
     },
@@ -219,24 +220,26 @@ export default {
       try {
         const payload = {
           type: this.form.type,
-          date: this.form.date || new Date().toISOString().slice(0, 10),
-          category: this.form.category,
+          transaction_date: this.form.transaction_date || new Date().toISOString().slice(0, 10),
+          category: this.form.category.trim(),
           amount: Number(this.form.amount),
-          note: this.form.note,
-          description: this.form.note,
+          description: this.form.description.trim(),
         };
-        await this.$store.dispatch('createCashflow', payload);
+
+        await apiClient.post('/cashflows', payload);
+        await this.$store.dispatch('fetchCashflows');
+        
         this.dialog = false;
         this.form = {
           type: 'OUT',
-          date: new Date().toISOString().slice(0, 10),
+          transaction_date: new Date().toISOString().slice(0, 10),
           category: '',
           amount: 0,
-          note: '',
+          description: '',
         };
       } catch (err) {
         this.errorMessage =
-          (err.response && err.response.data && err.response.data.message) ||
+          (err.response && err.response.data && (err.response.data.message || JSON.stringify(err.response.data))) ||
           'Gagal menyimpan catatan kas ke database.';
       } finally {
         this.isSaving = false;
@@ -246,7 +249,8 @@ export default {
       this.deletingId = id;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('removeCashflow', id);
+        await apiClient.delete(`/cashflows/${id}`);
+        await this.$store.dispatch('fetchCashflows');
       } catch (err) {
         this.errorMessage = 'Gagal menghapus catatan kas dari server.';
       } finally {

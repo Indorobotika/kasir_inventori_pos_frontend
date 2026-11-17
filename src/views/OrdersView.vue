@@ -83,13 +83,13 @@
           <tr v-if="filteredOrders.length === 0">
             <td colspan="8" class="text-center py-8 grey--text">Tidak ada transaksi pada rentang tanggal ini.</td>
           </tr>
-          <tr v-for="ord in filteredOrders" :key="ord.invoice || ord.id">
-            <td class="font-weight-bold">{{ ord.invoice }}</td>
+          <tr v-for="ord in filteredOrders" :key="ord.id">
+            <td class="font-weight-bold">{{ ord.invoice_number }}</td>
             <td>{{ formatOrderTime(ord) }}</td>
-            <td>{{ ord.customer || 'Umum' }}</td>
+            <td>{{ ord.customer_name || 'Umum' }}</td>
             <td>{{ ord.platform || 'Offline Store' }}</td>
-            <td>{{ ord.method || ord.payment_method || '-' }}</td>
-            <td class="font-weight-bold">Rp {{ Number(ord.total || 0).toLocaleString('id-ID') }}</td>
+            <td>{{ ord.payment_method || '-' }}</td>
+            <td class="font-weight-bold">Rp {{ Number(ord.total_bill || 0).toLocaleString('id-ID') }}</td>
             <td>
               <v-chip
                 x-small
@@ -97,7 +97,7 @@
                 :class="getStatusColor(ord.status).text"
                 class="font-weight-bold"
               >
-                {{ ord.status || 'Selesai' }}
+                {{ formatStatusLabel(ord.status) }}
               </v-chip>
             </td>
             <td>
@@ -108,34 +108,34 @@
       </v-simple-table>
     </v-card>
 
-    <!-- Template Struk Thermal Tersembunyi (Cetak Ulang langsung dari halaman Pesanan) -->
+    <!-- Template Struk Thermal Tersembunyi -->
     <div style="display: none;">
       <div id="OrderReceiptPrint">
         <div id="invoice-POS-order">
           <center>
-            <h3>{{ setting.store_name }}</h3>
-            <p>{{ setting.location_store }}<br/>Telp: {{ setting.contact }}</p>
+            <h3>{{ setting && setting.store_name ? setting.store_name : 'Toko' }}</h3>
+            <p>{{ setting && setting.location_store ? setting.location_store : '' }}<br/>Telp: {{ setting && setting.contact ? setting.contact : '-' }}</p>
           </center>
           <hr/>
           <p v-if="receiptOrder">
-            No: {{ receiptOrder.invoice }}<br/>
+            No: {{ receiptOrder.invoice_number }}<br/>
             Waktu: {{ formatOrderTime(receiptOrder) }}<br/>
-            Platform: {{ receiptOrder.platform || 'Offline Store' }} · {{ receiptOrder.method || receiptOrder.payment_method }}
+            Platform: {{ receiptOrder.platform || 'Offline Store' }} · {{ receiptOrder.payment_method }}
           </p>
-          <table v-if="receiptOrder && receiptOrder.items" style="width: 100%; font-size: 11px;">
-            <tr v-for="(item, idx) in receiptOrder.items" :key="item.id || idx">
-              <td>{{ item.title || item.name }} x{{ item.quantity }}</td>
-              <td style="text-align: right;">{{ (Number(item.price || 0) * Number(item.quantity || 1)).toLocaleString('id-ID') }}</td>
+          <table v-if="receiptOrder && receiptOrder.details" style="width: 100%; font-size: 11px;">
+            <tr v-for="(item, idx) in receiptOrder.details" :key="item.id || idx">
+              <td>{{ item.product ? item.product.title : 'Produk' }} x{{ item.quantity }}</td>
+              <td style="text-align: right;">{{ Number(item.subtotal || 0).toLocaleString('id-ID') }}</td>
             </tr>
           </table>
           <hr/>
           <div v-if="receiptOrder" style="font-size: 11px; text-align: right;">
-            <div>Subtotal: Rp {{ Number(receiptOrder.subtotal || receiptOrder.total || 0).toLocaleString('id-ID') }}</div>
-            <div v-if="Number(receiptOrder.discount || 0) > 0">Diskon: -Rp {{ Number(receiptOrder.discount).toLocaleString('id-ID') }}</div>
-            <div>PPN ({{ setting.tax }}%): Rp {{ Number(receiptOrder.tax || 0).toLocaleString('id-ID') }}</div>
-            <strong>Total: Rp {{ Number(receiptOrder.total || 0).toLocaleString('id-ID') }}</strong>
+            <div>Subtotal: Rp {{ Number(receiptOrder.subtotal || 0).toLocaleString('id-ID') }}</div>
+            <div v-if="Number(receiptOrder.discount_amount || 0) > 0">Diskon: -Rp {{ Number(receiptOrder.discount_amount).toLocaleString('id-ID') }}</div>
+            <div>PPN: Rp {{ Number(receiptOrder.tax || 0).toLocaleString('id-ID') }}</div>
+            <strong>Total: Rp {{ Number(receiptOrder.total_bill || 0).toLocaleString('id-ID') }}</strong>
           </div>
-          <center><p style="margin-top: 8px;">{{ setting.receipt_footer }}</p></center>
+          <center><p style="margin-top: 8px;">{{ setting && setting.receipt_footer ? setting.receipt_footer : 'Terima kasih' }}</p></center>
         </div>
       </div>
     </div>
@@ -164,10 +164,13 @@ export default {
     ...mapGetters(['orders', 'setting']),
     filteredOrders() {
       return this.orders.filter((o) => {
-        const status = o.status || 'Selesai';
-        const matchStatus = this.statusFilter === 'Semua status' || status === this.statusFilter;
+        const status = o.status;
+        let matchStatus = true;
+        if (this.statusFilter === 'Selesai') matchStatus = status === 'success';
+        else if (this.statusFilter === 'Belum Lunas') matchStatus = status === 'pending';
+        else if (this.statusFilter === 'Dibatalkan') matchStatus = status === 'canceled';
 
-        const rawDate = (o.date || o.created_at || '').slice(0, 10);
+        const rawDate = (o.created_at || '').slice(0, 10);
         const matchStart = !this.startDate || !rawDate || rawDate >= this.startDate;
         const matchEnd = !this.endDate || !rawDate || rawDate <= this.endDate;
 
@@ -175,7 +178,9 @@ export default {
       });
     },
     omzet() {
-      return this.filteredOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+      return this.filteredOrders
+        .filter(o => o.status === 'success')
+        .reduce((s, o) => s + Number(o.total_bill || 0), 0);
     },
   },
   async created() {
@@ -186,10 +191,8 @@ export default {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await Promise.all([
-          this.$store.dispatch('fetchOrders'),
-          this.$store.dispatch('fetchPosData'),
-        ]);
+        await this.$store.dispatch('fetchOrders', { start_date: this.startDate, end_date: this.endDate });
+        await this.$store.dispatch('fetchPosData');
       } catch (err) {
         if (err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -201,13 +204,17 @@ export default {
       }
     },
     formatOrderTime(ord) {
-      if (ord.time) return ord.time;
       if (ord.created_at) return String(ord.created_at).replace('T', ' ').slice(0, 16);
-      return ord.date || '-';
+      return '-';
+    },
+    formatStatusLabel(status) {
+      if (status === 'canceled') return 'Dibatalkan';
+      if (status === 'pending') return 'Belum Lunas';
+      return 'Selesai';
     },
     getStatusColor(status) {
-      if (status === 'Dibatalkan') return { bg: 'red lighten-4', text: 'red--text text--darken-3' };
-      if (status === 'Belum Lunas') return { bg: 'amber lighten-4', text: 'amber--text text--darken-4' };
+      if (status === 'canceled') return { bg: 'red lighten-4', text: 'red--text text--darken-3' };
+      if (status === 'pending') return { bg: 'amber lighten-4', text: 'amber--text text--darken-4' };
       return { bg: 'green lighten-4', text: 'green--text text--darken-3' };
     },
     reprint(order) {
@@ -215,10 +222,10 @@ export default {
       this.$nextTick(() => {
         const divToPrint = document.getElementById('OrderReceiptPrint');
         if (!divToPrint) return;
-        const width = this.setting.receipt_width === '80 mm' ? '80mm' : '58mm';
+        const width = this.setting && this.setting.receipt_width === '80 mm' ? '80mm' : '58mm';
         const win = window.open('', '_blank', 'width=340,height=600');
         win.document.write(`
-          <html><head><title>Struk ${order.invoice || ''}</title>
+          <html><head><title>Struk ${order.invoice_number || ''}</title>
           <style>
             #invoice-POS-order { width: ${width}; margin: 0 auto; font-family: monospace; font-size: 11px; }
           </style>

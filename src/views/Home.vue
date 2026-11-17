@@ -33,7 +33,7 @@
 
         <div class="d-flex flex-wrap mb-4">
           <v-chip
-            v-for="cat in categories"
+            v-for="cat in categoryNames"
             :key="cat"
             class="mr-2 mb-2 font-weight-medium"
             :color="selectedCategory === cat ? '#0f4c3a' : 'white'"
@@ -51,7 +51,7 @@
           <div class="caption grey--text mt-2">Memuat produk dari server...</div>
         </div>
 
-        <!-- Alert jika terjadi error (misal sesi habis / server mati) -->
+        <!-- Alert jika terjadi error -->
         <v-alert v-else-if="errorMessage" type="error" dense outlined class="rounded-lg">
           {{ errorMessage }}
         </v-alert>
@@ -64,13 +64,18 @@
         <!-- Grid Daftar Produk dari Database -->
         <v-row v-else>
           <v-col v-for="prod in filteredProducts" :key="prod.id" cols="12" sm="6" md="4">
-            <v-card flat outlined class="rounded-xl overflow-hidden cursor-pointer product-card white" @click="$store.commit('ADD_CART', prod)">
+            <v-card
+              flat
+              outlined
+              class="rounded-xl overflow-hidden cursor-pointer product-card white"
+              @click="addToCart(prod)"
+            >
               <div class="grey lighten-3 d-flex align-center justify-center position-relative" style="height: 155px;">
                 <v-chip
-                  v-if="prod.type === 'Resep'"
+                  v-if="(prod.product_type || prod.type || '').toLowerCase() === 'resep'"
                   x-small
-                  color="white"
-                  class="font-weight-bold position-absolute"
+                  color="purple lighten-5"
+                  class="purple--text font-weight-bold position-absolute"
                   style="top: 10px; left: 10px;"
                 >
                   RESEP
@@ -83,7 +88,12 @@
                   <span class="subtitle-2 font-weight-bold teal--text text--darken-4">
                     Rp {{ Number(getDisplayPrice(prod)).toLocaleString('id-ID') }}
                   </span>
-                  <span v-if="prod.stock !== null" class="caption grey--text">stok {{ prod.stock }}</span>
+                  <span
+                    v-if="(prod.product_type || prod.type || '').toLowerCase() !== 'resep' && prod.stock !== null"
+                    class="caption grey--text"
+                  >
+                    stok {{ prod.stock }}
+                  </span>
                 </div>
               </div>
             </v-card>
@@ -106,22 +116,24 @@
           </center>
           <hr/>
           <p v-if="receiptOrder">
-            No: {{ receiptOrder.invoice }}<br/>
+            No: {{ receiptOrder.invoice_number || receiptOrder.invoice }}<br/>
             Waktu: {{ receiptOrder.time }}<br/>
-            Platform: {{ receiptOrder.platform }} · {{ receiptOrder.method }}
+            Platform: {{ receiptOrder.platform }} · {{ receiptOrder.payment_method || receiptOrder.method }}
           </p>
           <table v-if="receiptOrder" style="width: 100%; font-size: 11px;">
             <tr v-for="item in receiptOrder.items" :key="item.id">
               <td>{{ item.title }} x{{ item.quantity }}</td>
-              <td style="text-align: right;">{{ (item.price * item.quantity).toLocaleString('id-ID') }}</td>
+              <td style="text-align: right;">{{ (Number(item.price) * Number(item.quantity)).toLocaleString('id-ID') }}</td>
             </tr>
           </table>
           <hr/>
           <div v-if="receiptOrder" style="font-size: 11px; text-align: right;">
-            <div>Subtotal: Rp {{ receiptOrder.subtotal.toLocaleString('id-ID') }}</div>
-            <div v-if="receiptOrder.discount > 0">Diskon: -Rp {{ receiptOrder.discount.toLocaleString('id-ID') }}</div>
-            <div>PPN ({{ setting.tax }}%): Rp {{ receiptOrder.tax.toLocaleString('id-ID') }}</div>
-            <strong>Total: Rp {{ receiptOrder.total.toLocaleString('id-ID') }}</strong>
+            <div>Subtotal: Rp {{ Number(receiptOrder.subtotal || 0).toLocaleString('id-ID') }}</div>
+            <div v-if="Number(receiptOrder.discount_amount || receiptOrder.discount || 0) > 0">
+              Diskon: -Rp {{ Number(receiptOrder.discount_amount || receiptOrder.discount).toLocaleString('id-ID') }}
+            </div>
+            <div>PPN ({{ setting.tax }}%): Rp {{ Number(receiptOrder.tax || 0).toLocaleString('id-ID') }}</div>
+            <strong>Total: Rp {{ Number(receiptOrder.total_bill || receiptOrder.total || 0).toLocaleString('id-ID') }}</strong>
           </div>
           <center><p style="margin-top: 8px;">{{ setting.receipt_footer }}</p></center>
         </div>
@@ -146,9 +158,14 @@ export default {
   }),
   computed: {
     ...mapGetters(['products', 'categories', 'platform', 'setting']),
+    categoryNames() {
+      const names = this.categories.map((c) => (typeof c === 'object' ? c.name : c));
+      return names.includes('Semua') ? names : ['Semua', ...names];
+    },
     filteredProducts() {
       return this.products.filter((p) => {
-        const matchCat = this.selectedCategory === 'Semua' || p.category === this.selectedCategory;
+        const prodCatName = p.category && typeof p.category === 'object' ? p.category.name : p.category;
+        const matchCat = this.selectedCategory === 'Semua' || prodCatName === this.selectedCategory;
         const title = (p.title || '').toLowerCase();
         const sku = (p.sku || '').toLowerCase();
         const keyword = this.search.toLowerCase();
@@ -158,7 +175,6 @@ export default {
     },
   },
   async created() {
-    // Selalu muat ulang data terbaru dari backend saat layar Kasir dibuka (terutama setelah browser di-refresh)
     this.isLoading = true;
     this.errorMessage = '';
     try {
@@ -183,7 +199,19 @@ export default {
   },
   methods: {
     getDisplayPrice(prod) {
-      return (prod.platformPrices && prod.platformPrices[this.platform]) || prod.price;
+      const prices = prod.platform_prices || prod.platformPrices;
+      if (Array.isArray(prices)) {
+        const found = prices.find((pp) => pp.platform_name === this.platform);
+        if (found) return found.price;
+      } else if (prices && typeof prices === 'object' && prices[this.platform]) {
+        return prices[this.platform];
+      }
+      return prod.price;
+    },
+    addToCart(prod) {
+      // Pastikan activePrice ter-set sesuai platform aktif saat masuk keranjang
+      const activePrice = Number(this.getDisplayPrice(prod));
+      this.$store.commit('ADD_CART', { ...prod, activePrice });
     },
     printReceipt() {
       const divToPrint = document.getElementById('InvPckPrint');

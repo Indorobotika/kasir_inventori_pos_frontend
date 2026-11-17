@@ -20,7 +20,7 @@
         <div style="max-width: 145px;">
           <div class="body-2 font-weight-bold text-truncate">{{ item.title }}</div>
           <div class="caption teal--text text--darken-4 font-weight-bold">
-            Rp {{ Number(item.activePrice).toLocaleString('id-ID') }}
+            Rp {{ Number(item.activePrice || item.price).toLocaleString('id-ID') }}
           </div>
         </div>
         <div class="d-flex align-center">
@@ -41,7 +41,7 @@
         <span>-Rp {{ discountAmount.toLocaleString('id-ID') }}</span>
       </div>
       <div class="d-flex justify-space-between caption grey--text text--darken-1 mb-2">
-        <span>PPN ({{ setting.tax }}%)</span>
+        <span>PPN ({{ Number(setting.tax || 0) }}%)</span>
         <span>Rp {{ taxAmount.toLocaleString('id-ID') }}</span>
       </div>
       <div class="d-flex justify-space-between subtitle-1 font-weight-bold mb-3">
@@ -69,7 +69,14 @@
       <v-card class="rounded-xl pa-5">
         <div class="d-flex justify-space-between align-center mb-3">
           <h3 class="headline font-weight-bold">Pembayaran</h3>
-          <v-btn icon small :disabled="isProcessing" @click="dialogPay = false"><v-icon>mdi-close</v-icon></v-btn>
+          <v-btn
+            icon
+            small
+            :disabled="isProcessing || isGeneratingQris || Boolean(pendingQrisOrder)"
+            @click="closePayDialog"
+          >
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
         </div>
 
         <v-alert v-if="checkoutError" type="error" dense text class="mb-3 caption">
@@ -84,7 +91,13 @@
         </v-sheet>
 
         <div class="caption font-weight-bold mb-2">Metode Pembayaran:</div>
-        <v-btn-toggle v-model="paymentMethod" mandatory color="#0f4c3a" class="d-flex mb-4">
+        <v-btn-toggle
+          v-model="paymentMethod"
+          mandatory
+          color="#0f4c3a"
+          class="d-flex mb-4"
+          :disabled="Boolean(pendingQrisOrder)"
+        >
           <v-btn value="CASH" class="flex-grow-1"><v-icon left small>mdi-cash</v-icon> Tunai</v-btn>
           <v-btn value="QRIS" class="flex-grow-1"><v-icon left small>mdi-qrcode</v-icon> QRIS</v-btn>
           <v-btn value="CARD" class="flex-grow-1"><v-icon left small>mdi-credit-card</v-icon> Kartu</v-btn>
@@ -105,15 +118,29 @@
           </div>
         </div>
 
+        <div v-if="paymentMethod === 'CARD'">
+          <v-text-field
+            v-model="numberCard"
+            label="Nomor Kartu / Referensi EDC (Opsional)"
+            outlined
+            dense
+            class="rounded-lg"
+          ></v-text-field>
+        </div>
+
         <div v-if="paymentMethod === 'QRIS'" class="text-center py-2">
           <div v-if="isGeneratingQris" class="py-6">
             <v-progress-circular indeterminate color="#0f4c3a"></v-progress-circular>
             <div class="caption grey--text mt-2">Menyiapkan kode QRIS...</div>
           </div>
-          <template v-else>
-            <qrcode-vue :value="qrisPayload" :size="170" level="H" class="mx-auto mb-2" />
-            <div class="caption grey--text">Scan QRIS untuk menyelesaikan pembayaran</div>
+          <template v-else-if="serverQrisString">
+            <qrcode-vue :value="serverQrisString" :size="170" level="H" class="mx-auto mb-2" />
+            <div class="caption font-weight-bold">{{ activeQrisInvoice }}</div>
+            <div class="caption grey--text mb-2">Scan QRIS, lalu klik konfirmasi setelah pembayaran masuk</div>
           </template>
+          <div v-else class="caption grey--text py-3">
+            Klik tombol di bawah untuk membuat tagihan & kode QRIS.
+          </div>
         </div>
 
         <v-btn
@@ -124,11 +151,11 @@
           rounded
           depressed
           class="mt-3"
-          :loading="isProcessing"
+          :loading="isProcessing || isGeneratingQris"
           :disabled="paymentMethod === 'CASH' && cashReceived < grandTotal"
-          @click="processCheckout"
+          @click="handleMainAction"
         >
-          Konfirmasi & Cetak Struk
+          {{ paymentMethod === 'QRIS' && !serverQrisString ? 'Buat Kode QRIS' : 'Konfirmasi & Cetak Struk' }}
         </v-btn>
       </v-card>
     </v-dialog>
@@ -145,35 +172,38 @@ export default {
   components: { QrcodeVue },
   data: () => ({
     dialogPay: false,
-    paymentMethod: 'QRIS',
+    paymentMethod: 'CASH',
     cashReceived: 0,
+    numberCard: '',
     isProcessing: false,
     isGeneratingQris: false,
     serverQrisString: '',
+    activeQrisInvoice: '',
+    pendingQrisOrder: null,
     checkoutError: '',
   }),
   computed: {
     ...mapGetters(['carts', 'totalQuantity', 'totalPrice', 'setting', 'platform', 'promotions']),
     activePromo() {
-      return this.promotions
-        .filter((p) => p.active && this.totalPrice >= Number(p.minSpend || p.min_spend || 0))
-        .sort((a, b) => Number(b.value) - Number(a.value))[0] || null;
+      return (
+        this.promotions
+          .filter((p) => Number(p.is_active) === 1 && this.totalPrice >= Number(p.required || 0))
+          .sort((a, b) => Number(b.result || 0) - Number(a.result || 0))[0] || null
+      );
     },
     discountAmount() {
       if (!this.activePromo) return 0;
-      const val = Number(this.activePromo.value || 0);
-      return this.activePromo.type === 'percent'
+      const val = Number(this.activePromo.result || 0);
+      return Number(this.activePromo.typ_promotion_id) === 2
         ? Math.round(this.totalPrice * (val / 100))
         : val;
     },
     taxAmount() {
-      return Math.round(Math.max(0, this.totalPrice - this.discountAmount) * (Number(this.setting.tax || 0) / 100));
+      const taxRate = Number(this.setting.tax || 0);
+      return Math.round(Math.max(0, this.totalPrice - this.discountAmount) * (taxRate / 100));
     },
     grandTotal() {
       return Math.max(0, this.totalPrice - this.discountAmount) + this.taxAmount;
-    },
-    qrisPayload() {
-      return this.serverQrisString || `000201010212-POS-${this.platform}-${this.grandTotal}`;
     },
   },
   watch: {
@@ -181,31 +211,95 @@ export default {
       if (v) {
         this.checkoutError = '';
         this.cashReceived = this.grandTotal;
-        if (this.paymentMethod === 'QRIS') {
-          this.fetchQrisFromBackend();
-        }
+        this.numberCard = '';
+        this.serverQrisString = '';
+        this.activeQrisInvoice = '';
+        this.pendingQrisOrder = null;
       }
     },
-    paymentMethod(method) {
-      if (this.dialogPay && method === 'QRIS') {
-        this.fetchQrisFromBackend();
+    paymentMethod() {
+      if (!this.pendingQrisOrder) {
+        this.checkoutError = '';
+        this.serverQrisString = '';
       }
     },
   },
   methods: {
-    async fetchQrisFromBackend() {
-      this.isGeneratingQris = true;
+    closePayDialog() {
+      if (this.pendingQrisOrder) return;
+      this.dialogPay = false;
       this.serverQrisString = '';
+      this.pendingQrisOrder = null;
+    },
+    async handleMainAction() {
+      if (this.paymentMethod === 'QRIS' && !this.serverQrisString) {
+        await this.createOrderAndGenerateQris();
+        return;
+      }
+
+      if (this.paymentMethod === 'QRIS' && this.pendingQrisOrder) {
+        const snapshot = this.pendingQrisOrder;
+        this.pendingQrisOrder = null;
+        this.finalizeReceipt(snapshot);
+        return;
+      }
+
+      await this.processCheckout();
+    },
+    buildBackendPayload() {
+      return {
+        carts: this.carts.map((c) => ({
+          id: c.id,
+          quantity: c.quantity,
+        })),
+        payment_method: this.paymentMethod,
+        platform: this.platform,
+        customer_name: 'Umum',
+        numberCard: this.paymentMethod === 'CARD' ? this.numberCard : null,
+        nominalCash: this.paymentMethod === 'CASH' ? Number(this.cashReceived) : this.grandTotal,
+      };
+    },
+    buildReceiptSnapshot(backendData = {}) {
+      const now = new Date();
+      return {
+        invoice_number: backendData.invoice_number || 'INV-' + Date.now(),
+        time:
+          now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) +
+          ', ' +
+          now.toTimeString().slice(0, 5).replace(':', '.'),
+        platform: this.platform,
+        payment_method: this.paymentMethod,
+        subtotal: this.totalPrice,
+        discount_amount: this.discountAmount,
+        tax: this.taxAmount,
+        total_bill: backendData.total_bill || this.grandTotal,
+        items: this.carts.map((c) => ({
+          id: c.id,
+          title: c.title,
+          quantity: c.quantity,
+          price: Number(c.activePrice || c.price),
+        })),
+      };
+    },
+    async createOrderAndGenerateQris() {
+      this.isGeneratingQris = true;
+      this.checkoutError = '';
       try {
-        const res = await apiClient.post('/payment-qris/generate', {
-          amount: this.grandTotal,
-          platform: this.platform,
+        const res = await apiClient.post('/payment-pos', this.buildBackendPayload());
+        const orderData = res.data.data || res.data;
+
+        const qrisRes = await apiClient.post('/payment-qris/generate', {
+          order_id: orderData.order_id,
         });
-        const data = res.data.data || res.data;
-        this.serverQrisString = data.qr_string || data.qris_string || data.payload || '';
-      } catch (e) {
-        // Gunakan fallback qrisPayload lokal jika generator gateway belum aktif
-        this.serverQrisString = '';
+        const qrisData = qrisRes.data;
+
+        this.serverQrisString = qrisData.qris_string || '';
+        this.activeQrisInvoice = orderData.invoice_number;
+        this.pendingQrisOrder = this.buildReceiptSnapshot(orderData);
+      } catch (error) {
+        this.checkoutError =
+          (error.response && error.response.data && error.response.data.message) ||
+          'Gagal membuat kode QRIS dari server.';
       } finally {
         this.isGeneratingQris = false;
       }
@@ -213,59 +307,27 @@ export default {
     async processCheckout() {
       this.isProcessing = true;
       this.checkoutError = '';
-
-      const now = new Date();
-      const totalHpp = this.carts.reduce((s, i) => s + Number(i.cost_price || 0) * i.quantity, 0);
-      const orderPayload = {
-        invoice: 'INV-' + now.toISOString().slice(2, 10).replace(/-/g, '') + '-' + Math.floor(100000000 + Math.random() * 900000000),
-        date: now.toISOString().slice(0, 10),
-        time: now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + now.toTimeString().slice(0, 5).replace(':', '.'),
-        customer: 'Umum',
-        platform: this.platform,
-        method: this.paymentMethod,
-        payment_method: this.paymentMethod,
-        subtotal: this.totalPrice,
-        discount: this.discountAmount,
-        tax: this.taxAmount,
-        hpp: totalHpp,
-        total: this.grandTotal,
-        cash_received: this.paymentMethod === 'CASH' ? this.cashReceived : this.grandTotal,
-        change_amount: this.paymentMethod === 'CASH' ? Math.max(0, this.cashReceived - this.grandTotal) : 0,
-        status: 'Selesai',
-        items: this.carts.map((c) => ({
-          id: c.id,
-          product_id: c.id,
-          title: c.title,
-          category: c.category,
-          quantity: c.quantity,
-          price: c.activePrice,
-          cost: Number(c.cost_price || 0),
-        })),
-      };
-
       try {
-        // Kirim transaksi ke POST /api/payment-pos
-        const savedOrder = await this.$store.dispatch('submitOrder', orderPayload);
+        const res = await apiClient.post('/payment-pos', this.buildBackendPayload());
+        const orderData = res.data.data || res.data;
+        const snapshot = this.buildReceiptSnapshot(orderData);
 
-        // Gabungkan data respons backend dengan struktur lokal agar cetak struk tetap utuh
-        const finalOrder = {
-          ...orderPayload,
-          ...(typeof savedOrder === 'object' ? savedOrder : {}),
-          items: orderPayload.items,
-        };
-
-        // Refresh stok produk & bahan baku terbaru dari server
-        this.$store.dispatch('fetchPosData');
-
-        this.dialogPay = false;
-        this.$root.$emit('trigger-print-invoice', finalOrder);
+        this.finalizeReceipt(snapshot);
       } catch (error) {
         this.checkoutError =
           (error.response && error.response.data && error.response.data.message) ||
-          'Transaksi gagal disimpan ke server. Periksa koneksi backend Anda.';
+          'Transaksi gagal disimpan ke server. Periksa stok produk/bahan baku.';
       } finally {
         this.isProcessing = false;
       }
+    },
+    finalizeReceipt(receiptSnapshot) {
+      this.$store.commit('CLEAR_CART');
+      this.$store.dispatch('fetchPosData');
+      this.dialogPay = false;
+      this.serverQrisString = '';
+      this.pendingQrisOrder = null;
+      this.$root.$emit('trigger-print-invoice', receiptSnapshot);
     },
   },
 };

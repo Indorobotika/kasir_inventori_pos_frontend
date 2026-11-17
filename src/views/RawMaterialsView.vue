@@ -5,7 +5,7 @@
         <h1 class="headline font-weight-bold">Bahan Baku</h1>
         <div class="caption grey--text text--darken-1">Stok bahan untuk produk produksi sendiri, plus stok opname.</div>
       </div>
-      <v-btn color="#0f4c3a" dark rounded depressed @click="dialogAdd = true">
+      <v-btn color="#0f4c3a" dark rounded depressed @click="openAddDialog">
         <v-icon left small>mdi-plus</v-icon> Bahan Baru
       </v-btn>
     </div>
@@ -26,7 +26,7 @@
             <th>Bahan</th>
             <th>Stok</th>
             <th>Min.</th>
-            <th>Harga beli</th>
+            <th>Harga Beli</th>
             <th>Status</th>
             <th class="text-right">Aksi</th>
           </tr>
@@ -67,6 +67,7 @@
       </v-simple-table>
     </v-card>
 
+    <!-- Dialog Tambah Bahan Baku -->
     <v-dialog v-model="dialogAdd" max-width="420" persistent>
       <v-card class="rounded-xl pa-5">
         <div class="d-flex justify-space-between align-center mb-3">
@@ -87,7 +88,7 @@
           rounded
           depressed
           :loading="isSaving"
-          :disabled="!form.name.trim()"
+          :disabled="!form.name.trim() || !form.unit.trim()"
           @click="saveMaterial"
         >
           Simpan Bahan
@@ -95,6 +96,7 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dialog Opname -->
     <v-dialog v-model="dialogOpname" max-width="360" persistent>
       <v-card class="rounded-xl pa-5">
         <div class="d-flex justify-space-between align-center mb-2">
@@ -130,6 +132,7 @@
 
 <script>
 import { mapGetters } from 'vuex';
+import apiClient from '@/services/api';
 
 export default {
   name: 'RawMaterialsView',
@@ -143,7 +146,7 @@ export default {
     isSavingOpname: false,
     deletingId: null,
     errorMessage: '',
-    form: { name: '', unit: 'kg', stock: 5, min_stock: 1, cost_price: 0 },
+    form: { name: '', unit: 'kg', stock: 0, min_stock: 1, cost_price: 0 },
   }),
   computed: {
     ...mapGetters(['rawMaterials']),
@@ -167,24 +170,28 @@ export default {
         this.isLoading = false;
       }
     },
+    openAddDialog() {
+      this.form = { name: '', unit: 'kg', stock: 0, min_stock: 1, cost_price: 0 };
+      this.dialogAdd = true;
+    },
     async saveMaterial() {
       this.isSaving = true;
       this.errorMessage = '';
       try {
         const payload = {
           name: this.form.name.trim(),
-          unit: this.form.unit.trim() || 'pcs',
+          unit: this.form.unit.trim(),
           stock: Number(this.form.stock || 0),
           min_stock: Number(this.form.min_stock || 0),
           cost_price: Number(this.form.cost_price || 0),
         };
-        await this.$store.dispatch('createRawMaterial', payload);
+        
+        await apiClient.post('/raw-materials', payload);
         await this.$store.dispatch('fetchPosData');
         this.dialogAdd = false;
-        this.form = { name: '', unit: 'kg', stock: 5, min_stock: 1, cost_price: 0 };
       } catch (err) {
         this.errorMessage =
-          (err.response && err.response.data && err.response.data.message) ||
+          (err.response && err.response.data && (err.response.data.message || JSON.stringify(err.response.data))) ||
           'Gagal menyimpan bahan baku baru ke database.';
       } finally {
         this.isSaving = false;
@@ -194,7 +201,8 @@ export default {
       this.deletingId = id;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('removeRawMaterial', id);
+        await apiClient.delete(`/raw-materials/${id}`);
+        await this.$store.dispatch('fetchPosData');
       } catch (err) {
         this.errorMessage = 'Gagal menghapus bahan baku dari database.';
       } finally {
@@ -210,11 +218,10 @@ export default {
       this.isSavingOpname = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('submitStockOpname', {
-          type: 'raw',
-          id: this.targetRm.id,
-          actualStock: Number(this.actualStock),
+        await apiClient.post(`/raw-materials/${this.targetRm.id}/stock-opname`, {
+          actual_stock: Number(this.actualStock),
         });
+        await this.$store.dispatch('fetchPosData');
         this.dialogOpname = false;
       } catch (err) {
         this.errorMessage = 'Gagal menyimpan stok opname bahan baku ke database.';
