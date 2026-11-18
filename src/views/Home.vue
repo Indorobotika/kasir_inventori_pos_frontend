@@ -1,13 +1,14 @@
 <template>
-  <v-container fluid class="pa-5">
+  <v-container fluid class="pa-3 pa-md-5">
     <v-row>
+      <!-- Kolom Daftar Produk -->
       <v-col cols="12" md="8">
-        <div class="d-flex justify-space-between align-center mb-4">
+        <div class="d-flex flex-wrap justify-space-between align-center mb-4">
           <div>
             <h1 class="headline font-weight-bold">Kasir</h1>
             <div class="caption grey--text text--darken-1">{{ setting.store_name }}</div>
           </div>
-          <div style="width: 220px;">
+          <div style="width: 200px;" class="mt-2 mt-md-0">
             <div class="caption grey--text mb-1">Platform penjualan</div>
             <v-select
               :value="platform"
@@ -15,8 +16,9 @@
               outlined
               dense
               hide-details
-              class="rounded-lg white"
-              @change="$store.commit('SET_PLATFORM', $event)"
+              class="rounded-lg"
+              :color="$vuetify.theme.dark ? 'white' : '#0f4c3a'"
+              @change="$store.commit('SET_PLATFORM',$event)"
             ></v-select>
           </div>
         </div>
@@ -27,17 +29,23 @@
           placeholder="Cari produk atau SKU..."
           outlined
           dense
+          clearable
           hide-details
-          class="rounded-xl white mb-4"
+          class="rounded-xl mb-4"
         ></v-text-field>
 
-        <div class="d-flex flex-wrap mb-4">
+        <!-- Kategori Filter -->
+        <div class="d-flex flex-wrap mb-4" style="overflow-x: auto; white-space: nowrap;">
           <v-chip
             v-for="cat in categoryNames"
             :key="cat"
             class="mr-2 mb-2 font-weight-medium"
-            :color="selectedCategory === cat ? '#0f4c3a' : 'white'"
-            :dark="selectedCategory === cat"
+            :color="selectedCategory === cat ? '#0f4c3a' : ($vuetify.theme.dark ? '#1e1e1e' : 'white')"
+            :class="{
+              'white--text': selectedCategory === cat,
+              'grey--text text--lighten-2': selectedCategory !== cat && $vuetify.theme.dark,
+              'grey--text text--darken-3': selectedCategory !== cat && !$vuetify.theme.dark
+            }"
             outlined
             @click="selectedCategory = cat"
           >
@@ -45,52 +53,71 @@
           </v-chip>
         </div>
 
-        <!-- Indikator Loading saat mengambil data dari backend -->
         <div v-if="isLoading" class="text-center py-10">
           <v-progress-circular indeterminate color="#0f4c3a"></v-progress-circular>
           <div class="caption grey--text mt-2">Memuat produk dari server...</div>
         </div>
 
-        <!-- Alert jika terjadi error -->
         <v-alert v-else-if="errorMessage" type="error" dense outlined class="rounded-lg">
           {{ errorMessage }}
         </v-alert>
 
-        <!-- Pesan jika produk kosong -->
         <div v-else-if="filteredProducts.length === 0" class="text-center py-10 grey--text">
           Produk tidak ditemukan.
         </div>
 
-        <!-- Grid Daftar Produk dari Database -->
-        <v-row v-else>
-          <v-col v-for="prod in filteredProducts" :key="prod.id" cols="12" sm="6" md="4">
+        <!-- Grid Produk Responsif -->
+        <v-row v-else dense>
+          <v-col v-for="prod in filteredProducts" :key="prod.id" cols="6" sm="4" md="3" class="pa-1">
             <v-card
               flat
               outlined
-              class="rounded-xl overflow-hidden cursor-pointer product-card white"
+              class="rounded-xl overflow-hidden product-card"
+              :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'"
+              :class="isOutOfStock(prod) ? 'opacity-60' : 'cursor-pointer'"
               @click="addToCart(prod)"
             >
-              <div class="grey lighten-3 d-flex align-center justify-center position-relative" style="height: 155px;">
+              <div class="grey lighten-3 d-flex align-center justify-center position-relative" style="height: 105px; overflow: hidden;">
+                <img
+                  v-if="prod.cover"
+                  :src="prod.cover"
+                  alt="Cover"
+                  style="width: 100%; height: 100%; object-fit: cover;"
+                />
+                <span v-else class="title grey--text font-weight-bold">
+                  {{ prod.title ? prod.title.charAt(0).toUpperCase() : '?' }}
+                </span>
+
                 <v-chip
-                  v-if="(prod.product_type || prod.type || '').toLowerCase() === 'resep'"
+                  v-if="isRecipe(prod)"
                   x-small
                   color="purple lighten-5"
                   class="purple--text font-weight-bold position-absolute"
-                  style="top: 10px; left: 10px;"
+                  style="top: 6px; left: 6px;"
                 >
                   RESEP
                 </v-chip>
-                <span class="headline grey--text font-weight-bold">{{ prod.title ? prod.title.charAt(0).toUpperCase() : '?' }}</span>
+                <v-chip
+                  v-if="isOutOfStock(prod)"
+                  x-small
+                  color="red lighten-5"
+                  class="red--text font-weight-bold position-absolute"
+                  style="top: 6px; right: 6px;"
+                >
+                  HABIS
+                </v-chip>
               </div>
-              <div class="pa-3">
-                <div class="subtitle-2 font-weight-bold text-truncate">{{ prod.title }}</div>
-                <div class="d-flex justify-space-between align-center mt-2">
-                  <span class="subtitle-2 font-weight-bold teal--text text--darken-4">
+
+              <div class="pa-2">
+                <div class="body-2 font-weight-bold text-truncate">{{ prod.title }}</div>
+                <div class="d-flex justify-space-between align-center mt-1">
+                  <span class="caption font-weight-bold teal--text text--lighten-2">
                     Rp {{ Number(getDisplayPrice(prod)).toLocaleString('id-ID') }}
                   </span>
                   <span
-                    v-if="(prod.product_type || prod.type || '').toLowerCase() !== 'resep' && prod.stock !== null"
-                    class="caption grey--text"
+                    v-if="!isRecipe(prod) && prod.stock !== null"
+                    style="font-size: 10px;"
+                    :class="prod.stock <= 5 ? 'red--text font-weight-bold' : 'grey--text'"
                   >
                     stok {{ prod.stock }}
                   </span>
@@ -101,12 +128,18 @@
         </v-row>
       </v-col>
 
-      <v-col cols="12" md="4">
+      <!-- Kolom Sidebar Keranjang -->
+      <v-col cols="12" md="4" class="mt-4 mt-md-0">
         <SideBarRight />
       </v-col>
     </v-row>
 
-    <!-- Template Struk Thermal Tersembunyi -->
+    <!-- Notifikasi Stok -->
+    <v-snackbar v-model="snackbar" timeout="2500" color="red darken-3" top right rounded="lg">
+      {{ snackbarText }}
+    </v-snackbar>
+
+    <!-- Template Struk Thermal Tersembunyi (Sekarang berada di dalam 1 root template) -->
     <div style="display: none;">
       <div id="InvPckPrint">
         <div id="invoice-POS">
@@ -118,6 +151,7 @@
           <p v-if="receiptOrder">
             No: {{ receiptOrder.invoice_number || receiptOrder.invoice }}<br/>
             Waktu: {{ receiptOrder.time }}<br/>
+            Pelanggan: {{ receiptOrder.customer_name || 'Umum' }}<br/>
             Platform: {{ receiptOrder.platform }} · {{ receiptOrder.payment_method || receiptOrder.method }}
           </p>
           <table v-if="receiptOrder" style="width: 100%; font-size: 11px;">
@@ -155,9 +189,11 @@ export default {
     receiptOrder: null,
     isLoading: false,
     errorMessage: '',
+    snackbar: false,
+    snackbarText: '',
   }),
   computed: {
-    ...mapGetters(['products', 'categories', 'platform', 'setting']),
+    ...mapGetters(['products', 'categories', 'platform', 'setting', 'carts']),
     categoryNames() {
       const names = this.categories.map((c) => (typeof c === 'object' ? c.name : c));
       return names.includes('Semua') ? names : ['Semua', ...names];
@@ -168,7 +204,7 @@ export default {
         const matchCat = this.selectedCategory === 'Semua' || prodCatName === this.selectedCategory;
         const title = (p.title || '').toLowerCase();
         const sku = (p.sku || '').toLowerCase();
-        const keyword = this.search.toLowerCase();
+        const keyword = (this.search || '').toLowerCase();
         const matchSearch = title.includes(keyword) || sku.includes(keyword);
         return matchCat && matchSearch;
       });
@@ -198,6 +234,13 @@ export default {
     this.$root.$off('trigger-print-invoice');
   },
   methods: {
+    isRecipe(prod) {
+      return (prod.product_type || prod.type || '').toLowerCase() === 'resep';
+    },
+    isOutOfStock(prod) {
+      if (this.isRecipe(prod)) return false;
+      return prod.stock !== null && Number(prod.stock) <= 0;
+    },
     getDisplayPrice(prod) {
       const prices = prod.platform_prices || prod.platformPrices;
       if (Array.isArray(prices)) {
@@ -209,7 +252,22 @@ export default {
       return prod.price;
     },
     addToCart(prod) {
-      // Pastikan activePrice ter-set sesuai platform aktif saat masuk keranjang
+      if (this.isOutOfStock(prod)) {
+        this.snackbarText = `Stok ${prod.title} habis!`;
+        this.snackbar = true;
+        return;
+      }
+
+      if (!this.isRecipe(prod) && prod.stock !== null) {
+        const inCart = this.carts.find((c) => c.id === prod.id);
+        const currentQty = inCart ? inCart.quantity : 0;
+        if (currentQty + 1 > Number(prod.stock)) {
+          this.snackbarText = `Stok ${prod.title} hanya tersisa ${prod.stock}.`;
+          this.snackbar = true;
+          return;
+        }
+      }
+
       const activePrice = Number(this.getDisplayPrice(prod));
       this.$store.commit('ADD_CART', { ...prod, activePrice });
     },
@@ -238,5 +296,8 @@ export default {
   border-color: #0f4c3a !important;
   transform: translateY(-2px);
   transition: all 0.2s ease;
+}
+.opacity-60 {
+  opacity: 0.6;
 }
 </style>

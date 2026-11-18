@@ -1,12 +1,29 @@
 <template>
-  <v-card flat outlined class="rounded-xl pa-4 d-flex flex-column white" style="height: calc(100vh - 36px); position: sticky; top: 18px;">
+  <v-card
+    flat
+    outlined
+    class="rounded-xl pa-4 d-flex flex-column"
+    :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'"
+    :style="{ height: 'auto', minHeight: 'calc(100vh - 36px)', position: 'sticky', top: '18px' }"
+  >
     <div class="d-flex justify-space-between align-center mb-3">
       <div class="subtitle-1 font-weight-bold">Keranjang ({{ totalQuantity }})</div>
       <v-btn v-if="carts.length" text x-small color="red" @click="$store.commit('CLEAR_CART')">Kosongkan</v-btn>
     </div>
 
-    <div class="flex-grow-1 overflow-y-auto pr-1">
-      <div v-if="carts.length === 0" class="text-center py-12 grey--text">
+    <!-- Input Nama Pelanggan Opsional -->
+    <v-text-field
+      v-model="customerName"
+      placeholder="Nama Pelanggan (Opsional)"
+      prepend-inner-icon="mdi-account-outline"
+      outlined
+      dense
+      hide-details
+      class="rounded-lg mb-3"
+    ></v-text-field>
+
+    <div class="flex-grow-1 overflow-y-auto pr-1" style="max-height: 40vh;">
+      <div v-if="carts.length === 0" class="text-center py-8 grey--text">
         <v-icon size="48" color="grey lighten-2">mdi-shopping-outline</v-icon>
         <div class="body-2 mt-2">Keranjang belanja kosong</div>
       </div>
@@ -15,18 +32,26 @@
         v-for="item in carts"
         :key="item.id"
         flat
-        class="pa-2 mb-2 rounded-lg grey lighten-4 d-flex align-center justify-space-between"
+        class="pa-2 mb-2 rounded-lg d-flex align-center justify-space-between"
+        :color="$vuetify.theme.dark ? '#2a2a2a' : 'grey lighten-4'"
       >
         <div style="max-width: 145px;">
           <div class="body-2 font-weight-bold text-truncate">{{ item.title }}</div>
-          <div class="caption teal--text text--darken-4 font-weight-bold">
+          <div class="caption teal--text text--lighten-2 font-weight-bold">
             Rp {{ Number(item.activePrice || item.price).toLocaleString('id-ID') }}
           </div>
         </div>
         <div class="d-flex align-center">
           <v-btn icon x-small @click="$store.commit('REMOVE_CART', item)"><v-icon small>mdi-minus</v-icon></v-btn>
           <span class="mx-2 font-weight-bold body-2">{{ item.quantity }}</span>
-          <v-btn icon x-small @click="$store.commit('ADD_CART', item)"><v-icon small>mdi-plus</v-icon></v-btn>
+          <v-btn
+            icon
+            x-small
+            :disabled="isMaxStockReached(item)"
+            @click="$store.commit('ADD_CART', item)"
+          >
+            <v-icon small>mdi-plus</v-icon>
+          </v-btn>
         </div>
       </v-card>
     </div>
@@ -46,7 +71,7 @@
       </div>
       <div class="d-flex justify-space-between subtitle-1 font-weight-bold mb-3">
         <span>Total</span>
-        <span class="teal--text text--darken-4">Rp {{ grandTotal.toLocaleString('id-ID') }}</span>
+        <span class="teal--text text--lighten-2">Rp {{ grandTotal.toLocaleString('id-ID') }}</span>
       </div>
 
       <v-btn
@@ -60,19 +85,19 @@
         @click="dialogPay = true"
       >
         <v-icon left small>mdi-shopping-outline</v-icon>
-        Lihat Keranjang ({{ totalQuantity }}) — Rp {{ grandTotal.toLocaleString('id-ID') }}
+        Bayar ({{ totalQuantity }}) — Rp {{ grandTotal.toLocaleString('id-ID') }}
       </v-btn>
     </div>
 
     <!-- Modal Pembayaran Hybrid -->
     <v-dialog v-model="dialogPay" max-width="440" persistent>
-      <v-card class="rounded-xl pa-5">
+      <v-card class="rounded-xl pa-5" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
         <div class="d-flex justify-space-between align-center mb-3">
           <h3 class="headline font-weight-bold">Pembayaran</h3>
           <v-btn
             icon
             small
-            :disabled="isProcessing || isGeneratingQris || Boolean(pendingQrisOrder)"
+            :disabled="isProcessing || isGeneratingQris"
             @click="closePayDialog"
           >
             <v-icon>mdi-close</v-icon>
@@ -83,9 +108,9 @@
           {{ checkoutError }}
         </v-alert>
 
-        <v-sheet color="#f3f6f4" class="pa-3 rounded-lg mb-4 text-center">
+        <v-sheet :color="$vuetify.theme.dark ? '#2a2a2a' : '#f3f6f4'" class="pa-3 rounded-lg mb-4 text-center">
           <div class="caption grey--text text--darken-2">Total Tagihan · {{ platform }}</div>
-          <div class="display-1 font-weight-bold teal--text text--darken-4">
+          <div class="display-1 font-weight-bold teal--text text--lighten-2">
             Rp {{ grandTotal.toLocaleString('id-ID') }}
           </div>
         </v-sheet>
@@ -114,7 +139,7 @@
           ></v-text-field>
           <div class="d-flex justify-space-between body-2 font-weight-bold mb-4">
             <span>Kembalian:</span>
-            <span class="green--text text--darken-3">Rp {{ Math.max(0, cashReceived - grandTotal).toLocaleString('id-ID') }}</span>
+            <span class="green--text text--darken-2">Rp {{ Math.max(0, cashReceived - grandTotal).toLocaleString('id-ID') }}</span>
           </div>
         </div>
 
@@ -131,15 +156,26 @@
         <div v-if="paymentMethod === 'QRIS'" class="text-center py-2">
           <div v-if="isGeneratingQris" class="py-6">
             <v-progress-circular indeterminate color="#0f4c3a"></v-progress-circular>
-            <div class="caption grey--text mt-2">Menyiapkan kode QRIS...</div>
+            <div class="caption grey--text mt-2">Menyiapkan QRIS toko...</div>
           </div>
-          <template v-else-if="serverQrisString">
-            <qrcode-vue :value="serverQrisString" :size="170" level="H" class="mx-auto mb-2" />
-            <div class="caption font-weight-bold">{{ activeQrisInvoice }}</div>
-            <div class="caption grey--text mb-2">Scan QRIS, lalu klik konfirmasi setelah pembayaran masuk</div>
+          <template v-else-if="serverQrisString || setting.qris_path_url">
+            <!-- Tampilkan Gambar QRIS dari Tabel Setting -->
+            <v-img
+              v-if="setting.qris_path_url"
+              :src="setting.qris_path_url"
+              max-width="180"
+              max-height="180"
+              class="mx-auto mb-2 rounded-lg elevation-1 white pa-2"
+              contain
+            ></v-img>
+            <qrcode-vue v-else-if="serverQrisString" :value="serverQrisString" :size="170" level="H" class="mx-auto mb-2" />
+            
+            <div class="caption font-weight-bold mt-1">{{ activeQrisInvoice }}</div>
+            <div class="caption teal--text font-weight-bold">Total: Rp {{ grandTotal.toLocaleString('id-ID') }}</div>
+            <div class="caption grey--text mb-2">Scan QRIS di atas, lalu klik tombol di bawah setelah pembayaran berhasil</div>
           </template>
           <div v-else class="caption grey--text py-3">
-            Klik tombol di bawah untuk membuat tagihan & kode QRIS.
+            Gambar QRIS belum diatur di menu Pengaturan. Silakan unggah terlebih dahulu.
           </div>
         </div>
 
@@ -155,7 +191,7 @@
           :disabled="paymentMethod === 'CASH' && cashReceived < grandTotal"
           @click="handleMainAction"
         >
-          {{ paymentMethod === 'QRIS' && !serverQrisString ? 'Buat Kode QRIS' : 'Konfirmasi & Cetak Struk' }}
+          {{ paymentMethod === 'QRIS' && !serverQrisString ? 'Buat Kode QRIS' : 'Konfirmasi Lunas & Cetak Struk' }}
         </v-btn>
       </v-card>
     </v-dialog>
@@ -171,6 +207,7 @@ export default {
   name: 'SideBarRight',
   components: { QrcodeVue },
   data: () => ({
+    customerName: '',
     dialogPay: false,
     paymentMethod: 'CASH',
     cashReceived: 0,
@@ -180,6 +217,7 @@ export default {
     serverQrisString: '',
     activeQrisInvoice: '',
     pendingQrisOrder: null,
+    pendingQrisOrderId: null,
     checkoutError: '',
   }),
   computed: {
@@ -215,6 +253,7 @@ export default {
         this.serverQrisString = '';
         this.activeQrisInvoice = '';
         this.pendingQrisOrder = null;
+        this.pendingQrisOrderId = null;
       }
     },
     paymentMethod() {
@@ -225,11 +264,16 @@ export default {
     },
   },
   methods: {
+    isMaxStockReached(item) {
+      const isRecipe = (item.product_type || item.type || '').toLowerCase() === 'resep';
+      if (isRecipe || item.stock === null || item.stock === undefined) return false;
+      return item.quantity >= Number(item.stock);
+    },
     closePayDialog() {
-      if (this.pendingQrisOrder) return;
       this.dialogPay = false;
       this.serverQrisString = '';
       this.pendingQrisOrder = null;
+      this.pendingQrisOrderId = null;
     },
     async handleMainAction() {
       if (this.paymentMethod === 'QRIS' && !this.serverQrisString) {
@@ -238,9 +282,7 @@ export default {
       }
 
       if (this.paymentMethod === 'QRIS' && this.pendingQrisOrder) {
-        const snapshot = this.pendingQrisOrder;
-        this.pendingQrisOrder = null;
-        this.finalizeReceipt(snapshot);
+        await this.confirmQrisPaid();
         return;
       }
 
@@ -254,7 +296,7 @@ export default {
         })),
         payment_method: this.paymentMethod,
         platform: this.platform,
-        customer_name: 'Umum',
+        customer_name: this.customerName.trim() || 'Umum',
         numberCard: this.paymentMethod === 'CARD' ? this.numberCard : null,
         nominalCash: this.paymentMethod === 'CASH' ? Number(this.cashReceived) : this.grandTotal,
       };
@@ -267,6 +309,7 @@ export default {
           now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) +
           ', ' +
           now.toTimeString().slice(0, 5).replace(':', '.'),
+        customer_name: this.customerName.trim() || 'Umum',
         platform: this.platform,
         payment_method: this.paymentMethod,
         subtotal: this.totalPrice,
@@ -295,6 +338,7 @@ export default {
 
         this.serverQrisString = qrisData.qris_string || '';
         this.activeQrisInvoice = orderData.invoice_number;
+        this.pendingQrisOrderId = orderData.order_id;
         this.pendingQrisOrder = this.buildReceiptSnapshot(orderData);
       } catch (error) {
         this.checkoutError =
@@ -302,6 +346,23 @@ export default {
           'Gagal membuat kode QRIS dari server.';
       } finally {
         this.isGeneratingQris = false;
+      }
+    },
+    async confirmQrisPaid() {
+      this.isProcessing = true;
+      this.checkoutError = '';
+      try {
+        if (this.pendingQrisOrderId) {
+          await apiClient.post(`/orders/${this.pendingQrisOrderId}/pay`);
+        }
+        const snapshot = this.pendingQrisOrder;
+        this.finalizeReceipt(snapshot);
+      } catch (error) {
+        this.checkoutError =
+          (error.response && error.response.data && error.response.data.message) ||
+          'Gagal mengonfirmasi pelunasan QRIS.';
+      } finally {
+        this.isProcessing = false;
       }
     },
     async processCheckout() {
@@ -324,9 +385,11 @@ export default {
     finalizeReceipt(receiptSnapshot) {
       this.$store.commit('CLEAR_CART');
       this.$store.dispatch('fetchPosData');
+      this.customerName = '';
       this.dialogPay = false;
       this.serverQrisString = '';
       this.pendingQrisOrder = null;
+      this.pendingQrisOrderId = null;
       this.$root.$emit('trigger-print-invoice', receiptSnapshot);
     },
   },

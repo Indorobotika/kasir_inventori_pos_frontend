@@ -1,11 +1,12 @@
 <template>
-  <v-container fluid class="pa-5">
-    <div class="d-flex justify-space-between align-center mb-4">
-      <div>
+  <v-container fluid class="pa-3 pa-md-5">
+    <!-- Header -->
+    <div class="d-flex flex-wrap justify-space-between align-center mb-4">
+      <div class="mb-2 mb-md-0">
         <h1 class="headline font-weight-bold">Pesanan</h1>
         <div class="caption grey--text text--darken-1">Riwayat transaksi dan laporan penjualan harian.</div>
       </div>
-      <v-btn icon outlined class="rounded-lg white" :loading="isLoading" @click="loadOrders">
+      <v-btn icon outlined class="rounded-lg" :loading="isLoading" @click="loadOrders">
         <v-icon small>mdi-refresh</v-icon>
       </v-btn>
     </div>
@@ -14,6 +15,7 @@
       {{ errorMessage }}
     </v-alert>
 
+    <!-- Filter Tanggal & Status (Responsif untuk HP) -->
     <div class="d-flex flex-wrap align-center mb-4">
       <v-text-field
         v-model="startDate"
@@ -21,18 +23,20 @@
         outlined
         dense
         hide-details
-        class="rounded-lg white mr-2 mb-2"
-        style="max-width: 170px;"
+        class="rounded-lg mr-2 mb-2 flex-grow-1"
+        style="max-width: 160px; min-width: 140px;"
+        @change="loadOrders"
       ></v-text-field>
-      <span class="mx-2 grey--text mb-2">s/d</span>
+      <span class="mx-1 grey--text mb-2 d-none d-sm-inline">s/d</span>
       <v-text-field
         v-model="endDate"
         type="date"
         outlined
         dense
         hide-details
-        class="rounded-lg white mr-3 mb-2"
-        style="max-width: 170px;"
+        class="rounded-lg mr-2 mb-2 flex-grow-1"
+        style="max-width: 160px; min-width: 140px;"
+        @change="loadOrders"
       ></v-text-field>
       <v-select
         v-model="statusFilter"
@@ -40,72 +44,92 @@
         outlined
         dense
         hide-details
-        class="rounded-lg white mb-2"
-        style="max-width: 180px;"
+        class="rounded-lg mb-2 flex-grow-1"
+        style="max-width: 180px; min-width: 150px;"
+        @change="loadOrders"
       ></v-select>
     </div>
 
+    <!-- Kartu Statistik -->
     <v-row class="mb-4">
-      <v-col cols="12" md="6">
-        <v-card flat outlined class="pa-4 rounded-xl white">
-          <div class="caption grey--text font-weight-bold">TRANSAKSI</div>
-          <div class="headline font-weight-bold mt-1">{{ filteredOrders.length }}</div>
+      <v-col cols="12" sm="6" class="mb-3 mb-sm-0">
+        <v-card flat outlined class="pa-4 rounded-xl h-100" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
+          <div class="caption grey--text font-weight-bold">TRANSAKSI SUKSES</div>
+          <div class="headline font-weight-bold mt-1">{{ summary.total_transactions || 0 }}</div>
         </v-card>
       </v-col>
-      <v-col cols="12" md="6">
-        <v-card flat outlined class="pa-4 rounded-xl white">
+      <v-col cols="12" sm="6">
+        <v-card flat outlined class="pa-4 rounded-xl h-100" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
           <div class="caption grey--text font-weight-bold">OMZET</div>
-          <div class="headline font-weight-bold teal--text text--darken-4 mt-1">Rp {{ omzet.toLocaleString('id-ID') }}</div>
+          <div class="headline font-weight-bold teal--text text--lighten-2 mt-1">
+            Rp {{ Number(summary.omzet || 0).toLocaleString('id-ID') }}
+          </div>
         </v-card>
       </v-col>
     </v-row>
 
-    <v-card flat outlined class="rounded-xl white">
+    <!-- Tabel Daftar Pesanan dengan Wrapper Scroll Horizontal untuk Mobile -->
+    <v-card flat outlined class="rounded-xl overflow-hidden" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
       <div v-if="isLoading" class="text-center py-8">
         <v-progress-circular indeterminate color="#0f4c3a"></v-progress-circular>
         <div class="caption grey--text mt-2">Memuat riwayat pesanan...</div>
       </div>
 
-      <v-simple-table v-else>
-        <thead>
-          <tr>
-            <th>Invoice</th>
-            <th>Waktu</th>
-            <th>Pelanggan</th>
-            <th>Platform</th>
-            <th>Bayar</th>
-            <th>Total</th>
-            <th>Status</th>
-            <th>Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="filteredOrders.length === 0">
-            <td colspan="8" class="text-center py-8 grey--text">Tidak ada transaksi pada rentang tanggal ini.</td>
-          </tr>
-          <tr v-for="ord in filteredOrders" :key="ord.id">
-            <td class="font-weight-bold">{{ ord.invoice_number }}</td>
-            <td>{{ formatOrderTime(ord) }}</td>
-            <td>{{ ord.customer_name || 'Umum' }}</td>
-            <td>{{ ord.platform || 'Offline Store' }}</td>
-            <td>{{ ord.payment_method || '-' }}</td>
-            <td class="font-weight-bold">Rp {{ Number(ord.total_bill || 0).toLocaleString('id-ID') }}</td>
-            <td>
-              <v-chip
-                x-small
-                :color="getStatusColor(ord.status).bg"
-                :class="getStatusColor(ord.status).text"
-                class="font-weight-bold"
-              >
-                {{ formatStatusLabel(ord.status) }}
-              </v-chip>
-            </td>
-            <td>
-              <v-btn text x-small color="#0f4c3a" class="font-weight-bold" @click="reprint(ord)">Struk</v-btn>
-            </td>
-          </tr>
-        </tbody>
-      </v-simple-table>
+      <div v-else style="overflow-x: auto;">
+        <v-simple-table style="min-width: 700px;">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Waktu</th>
+              <th>Pelanggan</th>
+              <th>Platform</th>
+              <th>Bayar</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th class="text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="orders.length === 0">
+              <td colspan="8" class="text-center py-8 grey--text">Tidak ada transaksi pada rentang tanggal ini.</td>
+            </tr>
+            <tr v-for="ord in orders" :key="ord.id">
+              <td class="font-weight-bold">{{ ord.invoice_number }}</td>
+              <td>{{ formatOrderTime(ord) }}</td>
+              <td>{{ ord.customer_name || 'Umum' }}</td>
+              <td>{{ ord.platform || 'Offline Store' }}</td>
+              <td>{{ ord.payment_method || '-' }}</td>
+              <td class="font-weight-bold">Rp {{ Number(ord.total_bill || 0).toLocaleString('id-ID') }}</td>
+              <td>
+                <v-chip
+                  x-small
+                  :color="getStatusColor(ord.status).bg"
+                  :class="getStatusColor(ord.status).text"
+                  class="font-weight-bold"
+                >
+                  {{ formatStatusLabel(ord.status) }}
+                </v-chip>
+              </td>
+              <td class="text-right">
+                <!-- Tombol Pelunasan Manual (Hanya muncul jika status pending / Belum Lunas) -->
+                <v-btn
+                  v-if="ord.status === 'pending'"
+                  text
+                  x-small
+                  color="orange darken-2"
+                  class="font-weight-bold mr-1"
+                  :loading="payingId === ord.id"
+                  @click="markAsPaid(ord)"
+                >
+                  Lunasin
+                </v-btn>
+
+                <v-btn text x-small color="#0f4c3a" class="font-weight-bold" @click="reprint(ord)">Struk</v-btn>
+              </td>
+            </tr>
+          </tbody>
+        </v-simple-table>
+      </div>
     </v-card>
 
     <!-- Template Struk Thermal Tersembunyi -->
@@ -144,6 +168,7 @@
 
 <script>
 import { mapGetters } from 'vuex';
+import apiClient from '@/services/api';
 
 export default {
   name: 'OrdersView',
@@ -156,32 +181,13 @@ export default {
       endDate: lastDay,
       statusFilter: 'Semua status',
       isLoading: false,
+      payingId: null,
       errorMessage: '',
       receiptOrder: null,
     };
   },
   computed: {
-    ...mapGetters(['orders', 'setting']),
-    filteredOrders() {
-      return this.orders.filter((o) => {
-        const status = o.status;
-        let matchStatus = true;
-        if (this.statusFilter === 'Selesai') matchStatus = status === 'success';
-        else if (this.statusFilter === 'Belum Lunas') matchStatus = status === 'pending';
-        else if (this.statusFilter === 'Dibatalkan') matchStatus = status === 'canceled';
-
-        const rawDate = (o.created_at || '').slice(0, 10);
-        const matchStart = !this.startDate || !rawDate || rawDate >= this.startDate;
-        const matchEnd = !this.endDate || !rawDate || rawDate <= this.endDate;
-
-        return matchStatus && matchStart && matchEnd;
-      });
-    },
-    omzet() {
-      return this.filteredOrders
-        .filter(o => o.status === 'success')
-        .reduce((s, o) => s + Number(o.total_bill || 0), 0);
-    },
+    ...mapGetters(['orders', 'summary', 'setting']),
   },
   async created() {
     await this.loadOrders();
@@ -191,8 +197,11 @@ export default {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('fetchOrders', { start_date: this.startDate, end_date: this.endDate });
-        await this.$store.dispatch('fetchPosData');
+        await this.$store.dispatch('fetchOrders', { 
+          start_date: this.startDate, 
+          end_date: this.endDate,
+          status: this.statusFilter 
+        });
       } catch (err) {
         if (err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -201,6 +210,18 @@ export default {
         }
       } finally {
         this.isLoading = false;
+      }
+    },
+    async markAsPaid(order) {
+      this.payingId = order.id;
+      this.errorMessage = '';
+      try {
+        await apiClient.post(`/orders/${order.id}/pay`);
+        await this.loadOrders();
+      } catch (err) {
+        this.errorMessage = (err.response && err.response.data && err.response.data.message) || 'Gagal mengubah status pelunasan.';
+      } finally {
+        this.payingId = null;
       }
     },
     formatOrderTime(ord) {
@@ -213,9 +234,23 @@ export default {
       return 'Selesai';
     },
     getStatusColor(status) {
-      if (status === 'canceled') return { bg: 'red lighten-4', text: 'red--text text--darken-3' };
-      if (status === 'pending') return { bg: 'amber lighten-4', text: 'amber--text text--darken-4' };
-      return { bg: 'green lighten-4', text: 'green--text text--darken-3' };
+      const isDark = this.$vuetify.theme.dark;
+      if (status === 'canceled') {
+        return { 
+          bg: isDark ? 'red darken-4' : 'red lighten-4', 
+          text: isDark ? 'red--text text--lighten-3' : 'red--text text--darken-3' 
+        };
+      }
+      if (status === 'pending') {
+        return { 
+          bg: isDark ? 'amber darken-4' : 'amber lighten-4', 
+          text: isDark ? 'amber--text text--lighten-3' : 'amber--text text--darken-4' 
+        };
+      }
+      return { 
+        bg: isDark ? 'green darken-4' : 'green lighten-4', 
+        text: isDark ? 'green--text text--lighten-3' : 'green--text text--darken-3' 
+      };
     },
     reprint(order) {
       this.receiptOrder = order;

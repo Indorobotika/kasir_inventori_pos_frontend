@@ -14,6 +14,7 @@
           hide-details
           class="rounded-lg white mr-2"
           style="width: 170px;"
+          @change="loadCashflows"
         ></v-text-field>
         <v-btn color="#0f4c3a" dark rounded depressed @click="dialog = true">
           <v-icon left small>mdi-plus</v-icon> Catat Kas
@@ -63,10 +64,10 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="filteredCashflows.length === 0">
+          <tr v-if="cashflows.length === 0">
             <td colspan="5" class="text-center py-8 grey--text">Belum ada catatan kas bulan ini.</td>
           </tr>
-          <tr v-for="item in filteredCashflows" :key="item.id">
+          <tr v-for="item in cashflows" :key="item.id">
             <td>{{ formatDate(item.transaction_date || item.created_at) }}</td>
             <td>{{ item.category }}</td>
             <td>{{ item.description || '-' }}</td>
@@ -173,23 +174,23 @@ export default {
   }),
   computed: {
     ...mapGetters(['cashflows']),
-    filteredCashflows() {
-      if (!this.month) return this.cashflows;
-      return this.cashflows.filter((item) => {
-        const itemDate = this.formatDate(item.transaction_date || item.created_at);
-        return itemDate.startsWith(this.month);
-      });
-    },
     totalIn() {
-      return this.filteredCashflows
+      return this.cashflows
         .filter((r) => r.type === 'IN')
         .reduce((s, r) => s + Number(r.amount || 0), 0);
     },
     totalOut() {
-      return this.filteredCashflows
+      return this.cashflows
         .filter((r) => r.type === 'OUT')
         .reduce((s, r) => s + Number(r.amount || 0), 0);
     },
+  },
+  watch: {
+    month(newVal) {
+      if (newVal) {
+        this.loadCashflows();
+      }
+    }
   },
   async created() {
     await this.loadCashflows();
@@ -203,7 +204,7 @@ export default {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('fetchCashflows');
+        await this.$store.dispatch('fetchCashflows', this.month);
       } catch (err) {
         if (err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -223,11 +224,13 @@ export default {
           transaction_date: this.form.transaction_date || new Date().toISOString().slice(0, 10),
           category: this.form.category.trim(),
           amount: Number(this.form.amount),
-          description: this.form.description.trim(),
         };
+        if (this.form.description) {
+          payload.description = this.form.description.trim();
+        }
 
         await apiClient.post('/cashflows', payload);
-        await this.$store.dispatch('fetchCashflows');
+        await this.loadCashflows(); // Muat ulang data berdasarkan bulan aktif
         
         this.dialog = false;
         this.form = {
@@ -238,9 +241,12 @@ export default {
           description: '',
         };
       } catch (err) {
-        this.errorMessage =
-          (err.response && err.response.data && (err.response.data.message || JSON.stringify(err.response.data))) ||
-          'Gagal menyimpan catatan kas ke database.';
+        if (err.response && err.response.data && err.response.data.errors) {
+          const errs = err.response.data.errors;
+          this.errorMessage = Object.values(errs).flat().join(', ');
+        } else {
+          this.errorMessage = (err.response && err.response.data && err.response.data.message) || 'Gagal menyimpan catatan kas.';
+        }
       } finally {
         this.isSaving = false;
       }
@@ -250,7 +256,7 @@ export default {
       this.errorMessage = '';
       try {
         await apiClient.delete(`/cashflows/${id}`);
-        await this.$store.dispatch('fetchCashflows');
+        await this.loadCashflows(); // Muat ulang data setelah hapus
       } catch (err) {
         this.errorMessage = 'Gagal menghapus catatan kas dari server.';
       } finally {

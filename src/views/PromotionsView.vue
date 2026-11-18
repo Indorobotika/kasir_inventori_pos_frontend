@@ -1,7 +1,8 @@
 <template>
-  <v-container fluid class="pa-5">
-    <div class="d-flex justify-space-between align-center mb-4">
-      <div>
+  <v-container fluid class="pa-3 pa-md-5">
+    <!-- Header -->
+    <div class="d-flex flex-wrap justify-space-between align-center mb-4">
+      <div class="mb-2 mb-md-0">
         <h1 class="headline font-weight-bold">Promo</h1>
         <div class="caption grey--text text--darken-1">Diskon otomatis diterapkan di kasir sesuai minimal belanja.</div>
       </div>
@@ -19,13 +20,19 @@
       <div class="caption grey--text mt-2">Memuat daftar promo...</div>
     </div>
 
-    <v-card v-else-if="promotions.length === 0" flat outlined class="pa-8 rounded-xl white text-center grey--text">
+    <v-card
+      v-else-if="promotions.length === 0"
+      flat
+      outlined
+      class="pa-8 rounded-xl text-center grey--text"
+      :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'"
+    >
       Belum ada promo aktif di database. Klik "Promo Baru" untuk menambahkan.
     </v-card>
 
     <v-row v-else>
-      <v-col v-for="promo in promotions" :key="promo.id" cols="12" md="6">
-        <v-card flat outlined class="pa-5 rounded-xl white">
+      <v-col v-for="promo in promotions" :key="promo.id" cols="12" md="6" class="mb-3">
+        <v-card flat outlined class="pa-4 pa-md-5 rounded-xl h-100" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
           <div class="d-flex justify-space-between align-start">
             <div>
               <div class="subtitle-1 font-weight-bold">{{ promo.title }}</div>
@@ -35,14 +42,14 @@
             </div>
             <v-chip
               x-small
-              :color="Number(promo.is_active) === 1 ? 'green lighten-4' : 'grey lighten-3'"
-              :class="Number(promo.is_active) === 1 ? 'green--text text--darken-3' : 'grey--text'"
+              :color="$vuetify.theme.dark ? (Number(promo.is_active) === 1 ? 'green darken-4' : 'grey darken-3') : (Number(promo.is_active) === 1 ? 'green lighten-4' : 'grey lighten-3')"
+              :class="$vuetify.theme.dark ? (Number(promo.is_active) === 1 ? 'green--text text--lighten-3' : 'grey--text text--lighten-1') : (Number(promo.is_active) === 1 ? 'green--text text--darken-3' : 'grey--text')"
               class="font-weight-bold"
             >
               {{ Number(promo.is_active) === 1 ? 'Aktif' : 'Nonaktif' }}
             </v-chip>
           </div>
-          <div class="headline font-weight-bold teal--text text--darken-4 mt-4">
+          <div class="headline font-weight-bold teal--text text--lighten-2 mt-4">
             {{ Number(promo.typ_promotion_id) === 2 ? `${Number(promo.result || 0)}%` : `Rp ${Number(promo.result || 0).toLocaleString('id-ID')}` }}
           </div>
           <div class="text-right mt-2">
@@ -60,8 +67,9 @@
       </v-col>
     </v-row>
 
+    <!-- Dialog Tambah Promo -->
     <v-dialog v-model="dialog" max-width="420" persistent>
-      <v-card class="rounded-xl pa-5">
+      <v-card class="rounded-xl pa-5" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
         <div class="d-flex justify-space-between align-center mb-3">
           <h3 class="headline font-weight-bold">Tambah Promo Baru</h3>
           <v-btn icon small :disabled="isSaving" @click="dialog = false"><v-icon>mdi-close</v-icon></v-btn>
@@ -160,6 +168,7 @@ export default {
           is_active: 1,
         };
         await apiClient.post('/promotions', payload);
+        await this.$store.dispatch('fetchPropsData'); // disesuaikan jika perlu
         await this.$store.dispatch('fetchPosData');
         this.dialog = false;
         this.form = { title: '', typ_promotion_id: 2, required: 50000, result: 10, is_active: 1 };

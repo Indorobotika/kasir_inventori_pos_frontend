@@ -1,4 +1,4 @@
-# Kasir & Inventori — Full-Stack Point of Sale (Laravel 10 + Vue 2 + Vuetify 2 + MySQL)
+# Indorobotika — Full-Stack Point of Sale (Laravel 10 + Vue 2 + Vuetify 2 + MySQL)
 
 Aplikasi Point of Sale (POS) & Inventori siap pakai dengan arsitektur lengkap:
 - **Backend**: PHP Laravel 10 REST API + Sanctum Auth + Midtrans QRIS Webhook + Transaksi Atomik Resep/Bahan Baku

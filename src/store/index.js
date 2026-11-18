@@ -18,7 +18,9 @@ export default new Vuex.Store({
     products: [],
     promotions: [],
     orders: [],
+    summary: { total_transactions: 0, omzet: 0, pending: 0, canceled: 0 }, // Ditambahkan untuk ringkasan pesanan
     cashflows: [],
+    cashflowSummary: { in: 0, out: 0, balance: 0 },
     setting: {
       store_name: 'Memuat Toko...',
       location_store: '',
@@ -39,7 +41,9 @@ export default new Vuex.Store({
     rawMaterials: (s) => s.rawMaterials,
     promotions: (s) => s.promotions,
     orders: (s) => s.orders,
+    summary: (s) => s.summary, // Ditambahkan agar dapat diakses oleh mapGetters di OrdersView
     cashflows: (s) => s.cashflows,
+    cashflowSummary: (s) => s.cashflowSummary,
     setting: (s) => s.setting,
     totalQuantity: (s) => s.carts.reduce((sum, i) => sum + i.quantity, 0),
     totalPrice: (s) => s.carts.reduce((sum, i) => sum + i.activePrice * i.quantity, 0),
@@ -58,7 +62,6 @@ export default new Vuex.Store({
     },
     SET_POS_DATA(state, { products, categories, setting, promotions, rawMaterials }) {
       if (products) {
-        // Normalisasi struktur produk agar kompatibel dengan template frontend
         state.products = products.map((p) => ({
           ...p,
           title: p.title || p.name || '',
@@ -81,8 +84,16 @@ export default new Vuex.Store({
     SET_ORDERS(state, orders) {
       state.orders = orders;
     },
-    SET_CASHFLOWS(state, cashflows) {
-      state.cashflows = cashflows;
+    SET_ORDER_SUMMARY(state, summary) {
+      if (summary) {
+        state.summary = summary;
+      }
+    },
+    SET_CASHFLOWS(state, { records, summary }) {
+      state.cashflows = records || [];
+      if (summary) {
+        state.cashflowSummary = summary;
+      }
     },
     SET_PLATFORM(state, platform) {
       state.platform = platform;
@@ -149,12 +160,17 @@ export default new Vuex.Store({
     // 1. Autentikasi Login ke POST /api/login
     async login({ commit, dispatch }, credentials) {
       const res = await apiClient.post('/login', credentials);
+
       const token = res.data.token || res.data.access_token || (res.data.data && res.data.data.token);
       const user = res.data.user || (res.data.data && res.data.data.user) || null;
+
       if (token) {
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user || {}));
         commit('SET_AUTH', { token, user });
         await dispatch('fetchPosData');
       }
+
       return res.data;
     },
 
@@ -168,12 +184,12 @@ export default new Vuex.Store({
       }
     },
 
-    // 2. Mengambil Data Utama Layar Kasir (Produk, Kategori, Setting, Promo, Bahan Baku)
+    // 2. Mengambil Data Utama Layar Kasir
     async fetchPosData({ commit }) {
       const [prodRes, catRes, setRes, promoRes, rawRes] = await Promise.all([
-        apiClient.get('/products'),
-        apiClient.get('/categories'),
-        apiClient.get('/settings'),
+        apiClient.get('/products').catch(() => ({ data: [] })),
+        apiClient.get('/categories').catch(() => ({ data: [] })),
+        apiClient.get('/settings').catch(() => ({ data: { data: { store_name: 'Toko Kasir', tax: 11 } } })),
         apiClient.get('/promotions').catch(() => ({ data: [] })),
         apiClient.get('/raw-materials').catch(() => ({ data: [] })),
       ]);
@@ -196,12 +212,32 @@ export default new Vuex.Store({
     },
 
     // 4. Mengambil Riwayat Pesanan dari GET /api/orders
-    async fetchOrders({ commit }) {
-      const res = await apiClient.get('/orders');
-      commit('SET_ORDERS', extractData(res));
+    async fetchOrders({ commit }, payload = {}) {
+      try {
+        const response = await apiClient.get('/orders', { params: payload });
+        // Menyimpan data orders dan summary ke state
+        commit('SET_ORDERS', response.data.orders);
+        commit('SET_ORDER_SUMMARY', response.data.summary);
+      } catch (err) {
+        console.error('Gagal mengambil data orders:', err);
+        throw err;
+      }
     },
 
-    // 5. CRUD Produk, Bahan Baku, Cashflow, Promo, & Pengaturan ke Database
+    // 5. Mengambil Data Cashflow berdasarkan filter bulan (Server-Side)
+    async fetchCashflows({ commit }, month = null) {
+      const params = month ? { month } : {};
+      const res = await apiClient.get('/cashflows', { params });
+      const extracted = extractData(res);
+
+      if (extracted && extracted.records) {
+        commit('SET_CASHFLOWS', { records: extracted.records, summary: extracted.summary });
+      } else {
+        commit('SET_CASHFLOWS', { records: extracted, summary: null });
+      }
+    },
+
+    // 6. CRUD Produk, Bahan Baku, Cashflow, Promo, & Pengaturan ke Database
     async createProduct({ commit }, payload) {
       const res = await apiClient.post('/products', payload);
       commit('ADD_PRODUCT', extractData(res));
@@ -222,10 +258,6 @@ export default new Vuex.Store({
     async removeRawMaterial({ commit }, id) {
       await apiClient.delete(`/raw-materials/${id}`);
       commit('DELETE_RAW_MATERIAL', id);
-    },
-    async fetchCashflows({ commit }) {
-      const res = await apiClient.get('/cashflows');
-      commit('SET_CASHFLOWS', extractData(res));
     },
     async createCashflow({ commit }, payload) {
       const res = await apiClient.post('/cashflows', payload);
