@@ -18,7 +18,7 @@
               hide-details
               class="rounded-lg"
               :color="$vuetify.theme.dark ? 'white' : '#0f4c3a'"
-              @change="$store.commit('SET_PLATFORM', $event)"
+              @change="onPlatformChange"
             ></v-select>
           </div>
         </div>
@@ -195,7 +195,12 @@
             <div v-if="Number(receiptOrder.discount_amount || receiptOrder.discount || 0) > 0">
               Diskon: -Rp {{ Number(receiptOrder.discount_amount || receiptOrder.discount).toLocaleString('id-ID') }}
             </div>
-            <div>PPN ({{ setting && setting.tax ? setting.tax : 0 }}%): Rp {{ Number(receiptOrder.tax || 0).toLocaleString('id-ID') }}</div>
+            <div v-if="Number(receiptOrder.supplier_sales_tax || 0) > 0">
+              Potongan/Pajak {{ receiptOrder.platform }}: -Rp {{ Number(receiptOrder.supplier_sales_tax).toLocaleString('id-ID') }}
+            </div>
+            <div v-else>
+              PPN ({{ setting && setting.tax ? setting.tax : 0 }}%): Rp {{ Number(receiptOrder.tax || 0).toLocaleString('id-ID') }}
+            </div>
             <strong>Total: Rp {{ Number(receiptOrder.total_bill || receiptOrder.total || 0).toLocaleString('id-ID') }}</strong>
           </div>
           <center><p style="margin-top: 8px;">{{ setting && setting.receipt_footer ? setting.receipt_footer : '' }}</p></center>
@@ -283,6 +288,9 @@ export default {
     }
   },
   methods: {
+    onPlatformChange(nextPlatform) {
+      this.$store.commit('SET_PLATFORM', nextPlatform);
+    },
     isRecipe(prod) {
       return (prod.product_type || prod.type || '').toLowerCase() === 'resep';
     },

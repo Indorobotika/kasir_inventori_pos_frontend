@@ -7,9 +7,20 @@
     :style="{ height: 'auto', minHeight: 'calc(100vh - 36px)', position: 'sticky', top: '18px' }"
   >
     <div class="d-flex justify-space-between align-center mb-3">
-      <div class="subtitle-1 font-weight-bold tabular-num">Keranjang ({{ totalQuantity }})</div>
+      <div class="d-flex align-center">
+        <div class="subtitle-1 font-weight-bold tabular-num">Keranjang ({{ totalQuantity }})</div>
+        <v-chip
+          v-if="isMarketplacePlatform"
+          x-small
+          :color="$vuetify.theme.dark ? 'orange darken-4' : 'orange lighten-5'"
+          :class="$vuetify.theme.dark ? 'amber--text text--lighten-3' : 'orange--text text--darken-4'"
+          class="ml-2 font-weight-bold"
+        >
+          {{ platform }}
+        </v-chip>
+      </div>
       <transition name="fade-fast">
-        <v-btn v-if="carts.length" text x-small color="red" @click="$store.commit('CLEAR_CART')">Kosongkan</v-btn>
+        <v-btn v-if="carts.length" text x-small color="red" @click="clearCartAndReset">Kosongkan</v-btn>
       </transition>
     </div>
 
@@ -37,10 +48,10 @@
       </v-alert>
     </transition>
 
-    <!-- Input Nama Pelanggan Opsional -->
+    <!-- Input Nama Pelanggan / No. Pesanan Marketplace Opsional -->
     <v-text-field
       v-model="customerName"
-      placeholder="Nama Pelanggan (Opsional)"
+      :placeholder="isMarketplacePlatform ? 'Nama Pembeli / No. Pesanan (Opsional)' : 'Nama Pelanggan (Opsional)'"
       prepend-inner-icon="mdi-account-outline"
       outlined
       dense
@@ -49,7 +60,7 @@
       class="rounded-lg mb-3"
     ></v-text-field>
 
-    <div class="flex-grow-1 overflow-y-auto pr-1" style="max-height: 40vh;">
+    <div class="flex-grow-1 overflow-y-auto pr-1" style="max-height: 36vh;">
       <transition name="fade-fast" mode="out-in">
         <div v-if="carts.length === 0" key="empty" class="text-center py-8 grey--text">
           <v-icon size="48" color="grey lighten-2" class="empty-icon">mdi-shopping-outline</v-icon>
@@ -96,6 +107,58 @@
       </transition>
     </div>
 
+    <!-- Pola A: Mode Cepat Harga Akhir Marketplace (Satu Tempat di Sidebar) -->
+    <transition name="slide-fade">
+      <v-sheet
+        v-if="isMarketplacePlatform && carts.length > 0"
+        outlined
+        rounded="lg"
+        class="pa-3 mt-2 mb-2"
+        :color="$vuetify.theme.dark ? '#252525' : '#f7faf8'"
+      >
+        <div class="d-flex justify-space-between align-center">
+          <div>
+            <div class="caption font-weight-bold">Harga Akhir {{ platform }}</div>
+            <div class="caption grey--text" style="font-size: 11px;">Input dana bersih yang didapat</div>
+          </div>
+          <v-switch
+            v-model="useFinalMarketplacePrice"
+            dense
+            hide-details
+            color="#0f4c3a"
+            :disabled="Boolean(pendingQrisOrder)"
+            class="mt-0 pt-0"
+          ></v-switch>
+        </div>
+
+        <div v-if="useFinalMarketplacePrice" class="mt-2">
+          <v-text-field
+            v-model.number="customFinalPrice"
+            type="number"
+            min="0"
+            step="100"
+            prefix="Rp"
+            label="Harga Jual Akhir Didapat"
+            outlined
+            dense
+            hide-details
+            :disabled="Boolean(pendingQrisOrder)"
+            class="rounded-lg tabular-num"
+            @input="isCustomPriceEdited = true"
+          ></v-text-field>
+          <div class="d-flex justify-space-between align-center mt-1">
+            <span class="caption grey--text" style="font-size: 11px;">Potongan / Pajak Platform:</span>
+            <span
+              class="caption font-weight-bold tabular-num"
+              :class="marketplaceDeduction >= 0 ? 'orange--text text--darken-3' : 'teal--text'"
+            >
+              {{ marketplaceDeduction >= 0 ? '-' : '+' }}Rp {{ Math.abs(marketplaceDeduction).toLocaleString('id-ID') }}
+            </span>
+          </div>
+        </div>
+      </v-sheet>
+    </transition>
+
     <div class="pt-3 border-top">
       <div class="d-flex justify-space-between caption grey--text text--darken-1 mb-1">
         <span>Subtotal</span>
@@ -107,12 +170,19 @@
           <span class="tabular-num">-Rp {{ discountAmount.toLocaleString('id-ID') }}</span>
         </div>
       </transition>
-      <div class="d-flex justify-space-between caption grey--text text--darken-1 mb-2">
+      <div v-if="!isMarketplacePriceActive" class="d-flex justify-space-between caption grey--text text--darken-1 mb-2">
         <span>PPN ({{ Number(setting && setting.tax ? setting.tax : 0) }}%)</span>
         <span class="tabular-num">Rp {{ taxAmount.toLocaleString('id-ID') }}</span>
       </div>
+      <div v-else class="d-flex justify-space-between caption orange--text text--darken-3 mb-2">
+        <span>Potongan / Pajak {{ platform }}</span>
+        <span class="tabular-num">
+          {{ marketplaceDeduction >= 0 ? '-' : '+' }}Rp {{ Math.abs(marketplaceDeduction).toLocaleString('id-ID') }}
+        </span>
+      </div>
+
       <div class="d-flex justify-space-between subtitle-1 font-weight-bold mb-3">
-        <span>Total</span>
+        <span>{{ isMarketplacePriceActive ? 'Dana Diterima' : 'Total' }}</span>
         <span class="teal--text text--lighten-2 tabular-num">Rp {{ displayGrandTotal.toLocaleString('id-ID') }}</span>
       </div>
 
@@ -180,10 +250,17 @@
           </v-alert>
         </transition>
 
+        <!-- Ringkasan Tagihan / Dana Diterima -->
         <v-sheet :color="$vuetify.theme.dark ? '#2a2a2a' : '#f3f6f4'" class="pa-3 rounded-lg mb-4 text-center">
-          <div class="caption grey--text text--darken-2">Total Tagihan · {{ platform }}</div>
+          <div class="caption grey--text text--darken-2">
+            {{ isMarketplacePriceActive ? 'Dana Bersih Diterima' : 'Total Tagihan' }} · {{ platform }}
+          </div>
           <div class="display-1 font-weight-bold teal--text text--lighten-2 tabular-num">
             Rp {{ displayGrandTotal.toLocaleString('id-ID') }}
+          </div>
+          <div v-if="isMarketplacePriceActive" class="caption grey--text mt-1 tabular-num">
+            Subtotal Barang Rp {{ baseAfterDiscount.toLocaleString('id-ID') }} ·
+            Potongan/Pajak {{ marketplaceDeduction >= 0 ? '-' : '+' }}Rp {{ Math.abs(marketplaceDeduction).toLocaleString('id-ID') }}
           </div>
         </v-sheet>
 
@@ -198,14 +275,14 @@
         >
           <v-btn value="CASH" class="flex-grow-1"><v-icon left small>mdi-cash</v-icon> Tunai</v-btn>
           <v-btn value="QRIS" class="flex-grow-1"><v-icon left small>mdi-qrcode</v-icon> QRIS</v-btn>
-          <v-btn value="CARD" class="flex-grow-1"><v-icon left small>mdi-credit-card</v-icon> Kartu</v-btn>
+          <v-btn value="CARD" class="flex-grow-1"><v-icon left small>mdi-credit-card</v-icon> Kartu / Transfer</v-btn>
         </v-btn-toggle>
 
         <transition name="fade-fast" mode="out-in">
           <div v-if="paymentMethod === 'CASH'" key="cash">
             <v-text-field
               v-model.number="cashReceived"
-              label="Nominal Tunai Diterima (Rp)"
+              :label="isMarketplacePriceActive ? 'Nominal Dana Diterima (Rp)' : 'Nominal Tunai Diterima (Rp)'"
               type="number"
               min="0"
               outlined
@@ -223,7 +300,7 @@
           <div v-else-if="paymentMethod === 'CARD'" key="card">
             <v-text-field
               v-model="numberCard"
-              label="Nomor Kartu / Referensi EDC (Opsional)"
+              :label="isMarketplacePlatform ? 'No. Pesanan / Referensi Pencairan (Opsional)' : 'Nomor Kartu / Referensi EDC (Opsional)'"
               outlined
               dense
               class="rounded-lg"
@@ -303,11 +380,21 @@ export default {
     pendingQrisOrder: null,
     pendingQrisOrderId: null,
     checkoutError: '',
+    useFinalMarketplacePrice: true,
+    customFinalPrice: null,
+    isCustomPriceEdited: false,
   }),
   computed: {
     ...mapGetters(['carts', 'totalQuantity', 'totalPrice', 'setting', 'platform', 'promotions']),
     isBusy() {
       return this.isProcessing || this.isGeneratingQris || this.isCancelingDraft;
+    },
+    isMarketplacePlatform() {
+      const p = String(this.platform || '').trim().toLowerCase();
+      return Boolean(p) && !['offline store', 'offline', 'pos', 'toko'].includes(p);
+    },
+    isMarketplacePriceActive() {
+      return this.isMarketplacePlatform && this.useFinalMarketplacePrice;
     },
     activePromo() {
       const promos = Array.isArray(this.promotions) ? this.promotions : [];
@@ -324,12 +411,34 @@ export default {
         ? Math.round(this.totalPrice * (val / 100))
         : val;
     },
+    baseAfterDiscount() {
+      return Math.max(0, this.totalPrice - this.discountAmount);
+    },
     taxAmount() {
+      if (this.isMarketplacePriceActive) return 0;
       const taxRate = Number(this.setting && this.setting.tax ? this.setting.tax : 0);
-      return Math.round(Math.max(0, this.totalPrice - this.discountAmount) * (taxRate / 100));
+      return Math.round(this.baseAfterDiscount * (taxRate / 100));
+    },
+    effectiveMarketplacePrice() {
+      if (!this.isMarketplacePriceActive) return this.baseAfterDiscount;
+      if (
+        this.customFinalPrice === null ||
+        this.customFinalPrice === '' ||
+        Number.isNaN(Number(this.customFinalPrice))
+      ) {
+        return this.baseAfterDiscount;
+      }
+      return Math.max(0, Math.round(Number(this.customFinalPrice)));
+    },
+    marketplaceDeduction() {
+      if (!this.isMarketplacePriceActive) return 0;
+      return this.baseAfterDiscount - this.effectiveMarketplacePrice;
     },
     grandTotal() {
-      return Math.max(0, this.totalPrice - this.discountAmount) + this.taxAmount;
+      if (this.isMarketplacePriceActive) {
+        return this.effectiveMarketplacePrice;
+      }
+      return this.baseAfterDiscount + this.taxAmount;
     },
     displayGrandTotal() {
       if (this.pendingQrisOrder && this.paymentMethod === 'QRIS') {
@@ -346,14 +455,56 @@ export default {
     },
   },
   watch: {
+    platform() {
+      this.isCustomPriceEdited = false;
+      this.syncDefaultMarketplacePrice();
+      if (this.isMarketplacePlatform && this.paymentMethod === 'CASH') {
+        this.paymentMethod = 'CARD';
+      }
+    },
+    baseAfterDiscount: {
+      immediate: true,
+      handler() {
+        this.syncDefaultMarketplacePrice();
+      },
+    },
+    useFinalMarketplacePrice(val) {
+      if (val) {
+        this.syncDefaultMarketplacePrice();
+      }
+      if (this.dialogPay && this.paymentMethod === 'CASH') {
+        this.cashReceived = this.displayGrandTotal;
+      }
+    },
+    customFinalPrice() {
+      if (this.dialogPay && this.paymentMethod === 'CASH') {
+        this.cashReceived = this.displayGrandTotal;
+      }
+    },
     dialogPay(v) {
       if (v) {
         this.checkoutError = '';
+        this.syncDefaultMarketplacePrice();
         this.cashReceived = this.displayGrandTotal;
       }
     },
   },
   methods: {
+    syncDefaultMarketplacePrice() {
+      if (!this.isMarketplacePlatform) {
+        this.customFinalPrice = null;
+        this.isCustomPriceEdited = false;
+        return;
+      }
+      if (!this.isCustomPriceEdited || this.customFinalPrice === null || this.customFinalPrice === '') {
+        this.customFinalPrice = this.baseAfterDiscount;
+      }
+    },
+    clearCartAndReset() {
+      this.$store.commit('CLEAR_CART');
+      this.isCustomPriceEdited = false;
+      this.customFinalPrice = null;
+    },
     isMaxStockReached(item) {
       const isRecipe = (item.product_type || item.type || '').toLowerCase() === 'resep';
       if (isRecipe || item.stock === null || item.stock === undefined) return false;
@@ -404,7 +555,6 @@ export default {
       if (!nextMethod || nextMethod === this.paymentMethod) return;
       this.checkoutError = '';
 
-      // Jika QRIS sudah ter-generate dan order pending sudah dibuat, batalkan draft lama sebelum ganti metode
       if (this.paymentMethod === 'QRIS' && this.pendingQrisOrderId) {
         const canceled = await this.cancelPendingQrisOrder(`Ganti metode pembayaran dari QRIS ke ${nextMethod}`);
         if (!canceled) return;
@@ -433,6 +583,7 @@ export default {
       await this.processCheckout();
     },
     buildBackendPayload() {
+      const deduction = Math.max(0, this.marketplaceDeduction);
       return {
         carts: this.carts.map((c) => {
           const isRm =
@@ -454,6 +605,9 @@ export default {
         customer_name: this.customerName.trim() || 'Umum',
         numberCard: this.paymentMethod === 'CARD' ? this.numberCard : null,
         nominalCash: this.paymentMethod === 'CASH' ? Number(this.cashReceived || 0) : this.grandTotal,
+        is_marketplace_final_price: this.isMarketplacePriceActive,
+        final_received_price: this.isMarketplacePriceActive ? this.effectiveMarketplacePrice : null,
+        supplier_sales_tax: this.isMarketplacePriceActive ? deduction : 0,
       };
     },
     buildReceiptSnapshot(backendData = {}) {
@@ -470,6 +624,7 @@ export default {
         subtotal: this.totalPrice,
         discount_amount: this.discountAmount,
         tax: this.taxAmount,
+        supplier_sales_tax: this.isMarketplacePriceActive ? Math.max(0, this.marketplaceDeduction) : 0,
         total_bill: backendData.total_bill || this.grandTotal,
         items: this.carts.map((c) => ({
           id: c.id,
@@ -538,7 +693,7 @@ export default {
       }
     },
     finalizeReceipt(receiptSnapshot) {
-      this.$store.commit('CLEAR_CART');
+      this.clearCartAndReset();
       this.$store.dispatch('fetchPosData');
       this.customerName = '';
       this.dialogPay = false;

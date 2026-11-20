@@ -52,10 +52,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="filteredProducts.length === 0">
+            <tr v-if="displayedProducts.length === 0">
               <td colspan="7" class="text-center py-8 grey--text">Belum ada data produk yang ditemukan.</td>
             </tr>
-            <tr v-for="p in filteredProducts" :key="p.id">
+            <tr v-for="p in displayedProducts" :key="p.id">
               <td>
                 <v-avatar size="44" class="grey lighten-3 rounded-lg" tile>
                   <img v-if="p.cover" :src="p.cover" alt="Cover" style="object-fit: cover;" />
@@ -89,8 +89,8 @@
                   {{ p.product_type === 'resep' ? 'Resep' : 'Retail' }}
                 </v-chip>
               </td>
-              <td class="font-weight-bold">Rp {{ Number(p.price || 0).toLocaleString('id-ID') }}</td>
-              <td>{{ p.stock !== null && p.stock !== undefined ? p.stock : '—' }}</td>
+              <td class="font-weight-bold tabular-num">Rp {{ Number(p.price || 0).toLocaleString('id-ID') }}</td>
+              <td class="tabular-num">{{ p.stock !== null && p.stock !== undefined ? p.stock : '—' }}</td>
               <td class="text-right">
                 <template v-if="p.source_type === 'raw_material'">
                   <v-btn text x-small color="#0f4c3a" class="mr-1" @click="openOpname(p)">Opname</v-btn>
@@ -117,6 +117,35 @@
             </tr>
           </tbody>
         </v-simple-table>
+      </div>
+
+      <!-- Footer Paging (10, 20, 50 data) -->
+      <div class="d-flex flex-wrap justify-space-between align-center pa-3 border-top">
+        <div class="d-flex flex-wrap align-center mb-2 mb-sm-0">
+          <span class="caption grey--text mr-2">Tampilkan:</span>
+          <v-select
+            v-model="perPage"
+            :items="[10, 20, 50]"
+            outlined
+            dense
+            hide-details
+            class="rounded-lg"
+            style="width: 85px;"
+            @change="onPerPageChange"
+          ></v-select>
+          <span class="caption grey--text ml-3 tabular-num">
+            Menampilkan {{ rangeText }} dari {{ effectiveTotal }} data
+          </span>
+        </div>
+
+        <v-pagination
+          v-model="page"
+          :length="effectiveLastPage"
+          :total-visible="5"
+          color="#0f4c3a"
+          circle
+          @input="onPageChange"
+        ></v-pagination>
       </div>
     </v-card>
 
@@ -169,7 +198,7 @@
     </v-dialog>
 
     <!-- Dialog Form Tambah / Edit Produk -->
-    <v-dialog v-model="dialogAdd" max-width="520" persistent>
+    <v-dialog v-model="dialogAdd" max-width="560" persistent>
       <v-card class="rounded-xl pa-5" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
         <div class="d-flex justify-space-between align-center mb-3">
           <h3 class="headline font-weight-bold">{{ isEditMode ? 'Edit Produk' : 'Tambah Produk Baru' }}</h3>
@@ -246,8 +275,48 @@
           class="rounded-lg mb-1"
         ></v-select>
 
-        <v-text-field v-model.number="form.cost_price" label="Harga Modal / HPP (Rp)" type="number" min="0" outlined dense class="rounded-lg mb-1"></v-text-field>
-        <v-text-field v-model.number="form.price" label="Harga Jual Offline (Rp)" type="number" min="0" outlined dense class="rounded-lg mb-1"></v-text-field>
+        <v-text-field
+          v-model.number="form.cost_price"
+          label="Harga Modal / HPP (Rp)"
+          type="number"
+          min="0"
+          outlined
+          dense
+          class="rounded-lg mb-1"
+        ></v-text-field>
+
+        <v-text-field
+          v-model.number="form.price"
+          label="Harga Jual Offline (Rp)"
+          type="number"
+          min="0"
+          outlined
+          dense
+          class="rounded-lg mb-1"
+        ></v-text-field>
+
+        <!-- Ringkasan Margin & Rekomendasi Harga Jual untuk Produk Resep -->
+        <v-alert
+          v-if="form.product_type === 'resep' && estimatedRecipeHpp > 0"
+          dense
+          text
+          :type="priceWarningType"
+          class="rounded-lg mb-2 py-2"
+        >
+          <div class="d-flex flex-wrap justify-space-between align-center">
+            <span class="caption font-weight-bold tabular-num">
+              Estimasi HPP Resep: Rp {{ formatRupiah(estimatedRecipeHpp) }}
+            </span>
+            <span class="caption tabular-num">
+              Acuan Jual (2x–3x): Rp {{ formatRupiah(estimatedRecipeHpp * 2) }} – Rp {{ formatRupiah(estimatedRecipeHpp * 3) }}
+            </span>
+          </div>
+          <div v-if="Number(form.price) > 0" class="caption mt-1 tabular-num">
+            Margin saat ini:
+            <strong>Rp {{ formatRupiah(Number(form.price) - effectiveHppReference) }}</strong>
+            ({{ marginPercentage.toFixed(1) }}% dari harga jual)
+          </div>
+        </v-alert>
 
         <v-text-field
           v-if="form.product_type === 'retail'"
@@ -260,7 +329,7 @@
           class="rounded-lg mb-3"
         ></v-text-field>
 
-        <!-- Komponen Resep Bahan Baku -->
+        <!-- Komponen Resep Bahan Baku + Estimasi HPP -->
         <div v-if="form.product_type === 'resep'" class="mb-4 pa-3 rounded-xl" :style="{ backgroundColor: $vuetify.theme.dark ? '#2d2d2d' : '#f5f5f5' }">
           <div class="d-flex justify-space-between align-center mb-2">
             <span class="subtitle-2 font-weight-bold">Komponen Bahan Baku Resep</span>
@@ -273,34 +342,62 @@
             Belum ada bahan baku ditambahkan. Klik tombol di atas.
           </div>
 
-          <div v-for="(recipe, index) in form.recipes" :key="index" class="d-flex align-center mb-2">
-            <v-select
-              v-model="recipe.raw_material_id"
-              :items="rawMaterialsList"
-              item-text="name"
-              item-value="id"
-              label="Pilih Bahan Baku"
-              outlined
-              dense
-              hide-details
-              class="rounded-lg mr-2"
-            ></v-select>
+          <div v-for="(recipe, index) in form.recipes" :key="index" class="mb-2">
+            <div class="d-flex align-center">
+              <v-select
+                v-model="recipe.raw_material_id"
+                :items="rawMaterialsList"
+                item-text="name"
+                item-value="id"
+                label="Pilih Bahan Baku"
+                outlined
+                dense
+                hide-details
+                class="rounded-lg mr-2"
+              ></v-select>
 
-            <v-text-field
-              v-model.number="recipe.qty_needed"
-              label="Takaran"
-              type="number"
-              step="0.0001"
-              min="0"
-              outlined
-              dense
-              hide-details
-              class="rounded-lg mr-2"
-              style="max-width: 110px;"
-            ></v-text-field>
+              <v-text-field
+                v-model.number="recipe.qty_needed"
+                label="Takaran"
+                type="number"
+                step="0.0001"
+                min="0"
+                outlined
+                dense
+                hide-details
+                class="rounded-lg mr-2"
+                style="max-width: 110px;"
+              ></v-text-field>
 
-            <v-btn icon x-small color="red" @click="removeRecipeRow(index)">
-              <v-icon small>mdi-delete-outline</v-icon>
+              <v-btn icon x-small color="red" @click="removeRecipeRow(index)">
+                <v-icon small>mdi-delete-outline</v-icon>
+              </v-btn>
+            </div>
+            <div class="caption grey--text mt-1 d-flex justify-space-between tabular-num">
+              <span>{{ getMaterialCostHint(recipe) }}</span>
+              <span class="font-weight-medium">
+                Subtotal: Rp {{ formatRupiah(getRecipeLineCost(recipe)) }}
+              </span>
+            </div>
+          </div>
+
+          <v-divider class="my-2"></v-divider>
+
+          <div class="d-flex justify-space-between align-center">
+            <div>
+              <div class="caption grey--text">Total Estimasi HPP Resep</div>
+              <div class="subtitle-1 font-weight-bold teal--text text--darken-3 tabular-num">
+                Rp {{ formatRupiah(estimatedRecipeHpp) }}
+              </div>
+            </div>
+            <v-btn
+              x-small
+              outlined
+              color="#0f4c3a"
+              :disabled="estimatedRecipeHpp <= 0"
+              @click="applyEstimatedHppToCostPrice"
+            >
+              <v-icon left x-small>mdi-calculator</v-icon> Pakai ke Harga Modal
             </v-btn>
           </div>
         </div>
@@ -365,6 +462,11 @@ export default {
   name: 'ProductsView',
   data: () => ({
     searchQuery: '',
+    searchTimer: null,
+    page: 1,
+    perPage: 10,
+    apiRecords: [],
+    apiPagination: null,
     dialogAdd: false,
     dialogCat: false,
     dialogOpname: false,
@@ -403,14 +505,73 @@ export default {
   }),
   computed: {
     ...mapGetters(['products']),
-    filteredProducts() {
+    hasApiPaginatedPayload() {
+      return Array.isArray(this.apiRecords) && this.apiPagination !== null;
+    },
+    fallbackFilteredList() {
       const list = Array.isArray(this.products) ? this.products : [];
       if (!this.searchQuery) return list;
       const q = this.searchQuery.toLowerCase();
-      return list.filter(p =>
+      return list.filter((p) =>
         (p.title && p.title.toLowerCase().includes(q)) ||
         (p.sku && p.sku.toLowerCase().includes(q))
       );
+    },
+    effectiveTotal() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.total !== undefined) {
+        return Number(this.apiPagination.total || 0);
+      }
+      return this.fallbackFilteredList.length;
+    },
+    effectiveLastPage() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.last_page !== undefined) {
+        return Math.max(1, Number(this.apiPagination.last_page || 1));
+      }
+      return Math.max(1, Math.ceil(this.fallbackFilteredList.length / this.perPage));
+    },
+    displayedProducts() {
+      if (this.hasApiPaginatedPayload) {
+        return this.apiRecords;
+      }
+      const start = (this.page - 1) * this.perPage;
+      return this.fallbackFilteredList.slice(start, start + this.perPage);
+    },
+    rangeText() {
+      if (this.effectiveTotal === 0 || this.displayedProducts.length === 0) {
+        return '0–0';
+      }
+      if (this.hasApiPaginatedPayload && this.apiPagination.from !== undefined && this.apiPagination.to !== undefined) {
+        return `${this.apiPagination.from}–${this.apiPagination.to}`;
+      }
+      const start = (this.page - 1) * this.perPage + 1;
+      const end = Math.min(this.effectiveTotal, start + this.displayedProducts.length - 1);
+      return `${start}–${end}`;
+    },
+    estimatedRecipeHpp() {
+      if (this.form.product_type !== 'resep' || !Array.isArray(this.form.recipes)) {
+        return 0;
+      }
+      const total = this.form.recipes.reduce((sum, r) => sum + this.getRecipeLineCost(r), 0);
+      return Math.round(total * 100) / 100;
+    },
+    effectiveHppReference() {
+      const manualCost = Number(this.form.cost_price || 0);
+      if (this.form.product_type === 'resep') {
+        return manualCost > 0 ? manualCost : this.estimatedRecipeHpp;
+      }
+      return manualCost;
+    },
+    marginPercentage() {
+      const sell = Number(this.form.price || 0);
+      if (sell <= 0) return 0;
+      return ((sell - this.effectiveHppReference) / sell) * 100;
+    },
+    priceWarningType() {
+      const sell = Number(this.form.price || 0);
+      if (sell <= 0 || this.estimatedRecipeHpp <= 0) return 'info';
+      if (sell <= this.estimatedRecipeHpp) return 'error';
+      if (sell < this.estimatedRecipeHpp * 1.5) return 'warning';
+      return 'success';
     },
     isProductFormValid() {
       const titleOk = Boolean(this.form.title && this.form.title.trim());
@@ -420,10 +581,21 @@ export default {
 
       if (this.form.product_type === 'resep' && this.form.recipes.length > 0) {
         return this.form.recipes.every(
-          r => Boolean(r.raw_material_id) && !Number.isNaN(Number(r.qty_needed)) && Number(r.qty_needed) > 0
+          (r) => Boolean(r.raw_material_id) && !Number.isNaN(Number(r.qty_needed)) && Number(r.qty_needed) > 0
         );
       }
       return true;
+    },
+  },
+  watch: {
+    searchQuery() {
+      this.page = 1;
+      if (this.hasApiPaginatedPayload) {
+        clearTimeout(this.searchTimer);
+        this.searchTimer = setTimeout(() => {
+          this.loadProducts();
+        }, 250);
+      }
     },
   },
   async created() {
@@ -433,7 +605,40 @@ export default {
       this.loadProducts(),
     ]);
   },
+  beforeDestroy() {
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+    }
+  },
   methods: {
+    formatRupiah(val) {
+      return Number(val || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+    },
+    findRawMaterial(rawMaterialId) {
+      const targetId = this.normalizeId(rawMaterialId);
+      if (targetId === null) return null;
+      return this.rawMaterialsList.find((rm) => this.normalizeId(rm.id) === targetId) || null;
+    },
+    getRecipeLineCost(recipe) {
+      if (!recipe || !recipe.raw_material_id) return 0;
+      const qty = Number(recipe.qty_needed || 0);
+      if (Number.isNaN(qty) || qty <= 0) return 0;
+      const rm = this.findRawMaterial(recipe.raw_material_id);
+      if (!rm) return 0;
+      const unitCost = Number(rm.cost_price || 0);
+      return unitCost * qty;
+    },
+    getMaterialCostHint(recipe) {
+      const rm = this.findRawMaterial(recipe && recipe.raw_material_id);
+      if (!rm) return 'Pilih bahan untuk melihat estimasi biaya';
+      const unit = rm.unit || 'unit';
+      return `Modal: Rp ${this.formatRupiah(rm.cost_price || 0)} / ${unit}`;
+    },
+    applyEstimatedHppToCostPrice() {
+      if (this.estimatedRecipeHpp > 0) {
+        this.form.cost_price = this.estimatedRecipeHpp;
+      }
+    },
     normalizeId(val) {
       if (val === null || val === undefined || val === '') return null;
       const num = Number(val);
@@ -454,7 +659,7 @@ export default {
       }
       const targetId = this.normalizeId(p.category_id);
       if (targetId !== null && this.categoriesList.length > 0) {
-        const found = this.categoriesList.find(c => this.normalizeId(c.id) === targetId);
+        const found = this.categoriesList.find((c) => this.normalizeId(c.id) === targetId);
         if (found) return found.name;
       }
       return p.category_name || '-';
@@ -465,7 +670,7 @@ export default {
           params: { _t: Date.now() }
         });
         const items = this.extractListPayload(response);
-        this.categoriesList = items.map(c => Object.assign({}, c, {
+        this.categoriesList = items.map((c) => Object.assign({}, c, {
           id: this.normalizeId(c.id)
         }));
         if (this.categoriesList.length > 0 && !this.form.category_id) {
@@ -479,10 +684,10 @@ export default {
     async loadRawMaterials() {
       try {
         const response = await apiClient.get('/raw-materials', {
-          params: { _t: Date.now() }
+          params: { per_page: 100, _t: Date.now() }
         });
         const items = this.extractListPayload(response);
-        this.rawMaterialsList = items.map(rm => Object.assign({}, rm, {
+        this.rawMaterialsList = items.map((rm) => Object.assign({}, rm, {
           id: this.normalizeId(rm.id)
         }));
       } catch (err) {
@@ -490,11 +695,41 @@ export default {
         this.rawMaterialsList = [];
       }
     },
+    onPerPageChange() {
+      this.page = 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadProducts();
+      }
+    },
+    onPageChange(nextPage) {
+      this.page = nextPage || 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadProducts();
+      }
+    },
     async loadProducts() {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('fetchPosData');
+        const res = await apiClient.get('/products', {
+          params: {
+            page: this.page,
+            per_page: this.perPage,
+            search: (this.searchQuery || '').trim(),
+            _t: Date.now(),
+          },
+        });
+
+        const body = res && res.data ? res.data : null;
+        if (body && Array.isArray(body.data) && body.pagination) {
+          this.apiRecords = body.data;
+          this.apiPagination = body.pagination;
+          this.page = Number(body.pagination.current_page || this.page || 1);
+        } else {
+          this.apiRecords = [];
+          this.apiPagination = null;
+          await this.$store.dispatch('fetchPosData');
+        }
       } catch (err) {
         if (err && err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -555,7 +790,7 @@ export default {
             : null);
 
       const mappedRecipes = Array.isArray(p.recipes)
-        ? p.recipes.map(r => ({
+        ? p.recipes.map((r) => ({
             raw_material_id: r.raw_material_id !== null && r.raw_material_id !== undefined
               ? this.normalizeId(r.raw_material_id)
               : (r.raw_material && r.raw_material.id !== undefined ? this.normalizeId(r.raw_material.id) : null),
@@ -621,13 +856,17 @@ export default {
       this.isSaving = true;
       this.errorMessage = '';
       try {
+        const finalCostPrice = (this.form.product_type === 'resep' && Number(this.form.cost_price || 0) <= 0 && this.estimatedRecipeHpp > 0)
+          ? this.estimatedRecipeHpp
+          : Number(this.form.cost_price || 0);
+
         const formData = new FormData();
         formData.append('sku', this.form.sku ? this.form.sku.trim() : '');
         formData.append('title', this.form.title.trim());
         formData.append('category_id', String(this.form.category_id));
         formData.append('unit', this.form.unit);
         formData.append('product_type', this.form.product_type);
-        formData.append('cost_price', String(Number(this.form.cost_price || 0)));
+        formData.append('cost_price', String(finalCostPrice));
         formData.append('price', String(Number(this.form.price)));
         formData.append('stock', this.form.product_type === 'resep' ? '0' : String(Number(this.form.stock || 0)));
 
@@ -639,8 +878,8 @@ export default {
 
         if (this.form.product_type === 'resep') {
           const validRecipes = this.form.recipes
-            .filter(r => r.raw_material_id && Number(r.qty_needed) > 0)
-            .map(r => ({
+            .filter((r) => r.raw_material_id && Number(r.qty_needed) > 0)
+            .map((r) => ({
               raw_material_id: this.normalizeId(r.raw_material_id),
               qty_needed: Number(r.qty_needed),
             }));
@@ -653,7 +892,11 @@ export default {
           await apiClient.post('/products', formData);
         }
 
-        await this.$store.dispatch('fetchPosData');
+        this.page = 1;
+        await Promise.all([
+          this.loadProducts(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
         this.dialogAdd = false;
       } catch (err) {
         if (err && err.response && err.response.data && err.response.data.errors) {
@@ -671,7 +914,10 @@ export default {
       this.errorMessage = '';
       try {
         await apiClient.delete(`/products/${id}`);
-        await this.$store.dispatch('fetchPosData');
+        await Promise.all([
+          this.loadProducts(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
       } catch (err) {
         this.errorMessage = 'Gagal menghapus produk dari database.';
       } finally {
@@ -698,7 +944,10 @@ export default {
             actual_stock: Number(this.actualStock),
           });
         }
-        await this.$store.dispatch('fetchPosData');
+        await Promise.all([
+          this.loadProducts(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
         this.dialogOpname = false;
       } catch (err) {
         this.errorMessage = 'Gagal memperbarui stok opname ke database.';
@@ -709,3 +958,9 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.tabular-num {
+  font-variant-numeric: tabular-nums;
+}
+</style>

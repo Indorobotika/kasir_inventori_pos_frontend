@@ -29,7 +29,7 @@
         hide-details
         class="rounded-lg mr-2 mb-2 flex-grow-1"
         style="max-width: 160px; min-width: 140px;"
-        @change="loadOrders"
+        @change="onFilterChange"
       ></v-text-field>
       <span class="mx-1 grey--text mb-2 d-none d-sm-inline">s/d</span>
       <v-text-field
@@ -40,7 +40,7 @@
         hide-details
         class="rounded-lg mr-2 mb-2 flex-grow-1"
         style="max-width: 160px; min-width: 140px;"
-        @change="loadOrders"
+        @change="onFilterChange"
       ></v-text-field>
       <v-select
         v-model="statusFilter"
@@ -50,7 +50,7 @@
         hide-details
         class="rounded-lg mb-2 flex-grow-1"
         style="max-width: 180px; min-width: 150px;"
-        @change="loadOrders"
+        @change="onFilterChange"
       ></v-select>
     </div>
 
@@ -59,14 +59,14 @@
       <v-col cols="12" sm="6" class="mb-3 mb-sm-0">
         <v-card flat outlined class="pa-4 rounded-xl h-100" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
           <div class="caption grey--text font-weight-bold">TRANSAKSI SUKSES</div>
-          <div class="headline font-weight-bold mt-1">{{ summary.total_transactions || 0 }}</div>
+          <div class="headline font-weight-bold mt-1 tabular-num">{{ activeSummary.total_transactions || 0 }}</div>
         </v-card>
       </v-col>
       <v-col cols="12" sm="6">
         <v-card flat outlined class="pa-4 rounded-xl h-100" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
           <div class="caption grey--text font-weight-bold">OMZET</div>
-          <div class="headline font-weight-bold teal--text text--lighten-2 mt-1">
-            Rp {{ Number(summary.omzet || 0).toLocaleString('id-ID') }}
+          <div class="headline font-weight-bold teal--text text--lighten-2 mt-1 tabular-num">
+            Rp {{ Number(activeSummary.omzet || 0).toLocaleString('id-ID') }}
           </div>
         </v-card>
       </v-col>
@@ -94,16 +94,16 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="orders.length === 0">
+            <tr v-if="displayedOrders.length === 0">
               <td colspan="8" class="text-center py-8 grey--text">Tidak ada transaksi pada rentang tanggal ini.</td>
             </tr>
-            <tr v-for="ord in orders" :key="ord.id">
+            <tr v-for="ord in displayedOrders" :key="ord.id">
               <td class="font-weight-bold">{{ ord.invoice_number }}</td>
-              <td>{{ formatOrderTime(ord) }}</td>
+              <td class="tabular-num">{{ formatOrderTime(ord) }}</td>
               <td>{{ ord.customer_name || 'Umum' }}</td>
               <td>{{ ord.platform || 'Offline Store' }}</td>
               <td>{{ ord.payment_method || '-' }}</td>
-              <td class="font-weight-bold">Rp {{ Number(ord.total_bill || 0).toLocaleString('id-ID') }}</td>
+              <td class="font-weight-bold tabular-num">Rp {{ Number(ord.total_bill || 0).toLocaleString('id-ID') }}</td>
               <td>
                 <v-chip
                   x-small
@@ -146,6 +146,35 @@
           </tbody>
         </v-simple-table>
       </div>
+
+      <!-- Footer Paging (10, 20, 50 data) -->
+      <div class="d-flex flex-wrap justify-space-between align-center pa-3 border-top">
+        <div class="d-flex flex-wrap align-center mb-2 mb-sm-0">
+          <span class="caption grey--text mr-2">Tampilkan:</span>
+          <v-select
+            v-model="perPage"
+            :items="[10, 20, 50]"
+            outlined
+            dense
+            hide-details
+            class="rounded-lg"
+            style="width: 85px;"
+            @change="onPerPageChange"
+          ></v-select>
+          <span class="caption grey--text ml-3 tabular-num">
+            Menampilkan {{ rangeText }} dari {{ effectiveTotal }} data
+          </span>
+        </div>
+
+        <v-pagination
+          v-model="page"
+          :length="effectiveLastPage"
+          :total-visible="5"
+          color="#0f4c3a"
+          circle
+          @input="onPageChange"
+        ></v-pagination>
+      </div>
     </v-card>
 
     <!-- Dialog Pembatalan & Berita Acara -->
@@ -163,7 +192,7 @@
             <div class="caption grey--text">No. Invoice</div>
             <div class="body-2 font-weight-bold mb-2">{{ selectedCancelOrder.invoice_number }}</div>
             <div class="caption grey--text">Nominal Transaksi</div>
-            <div class="subtitle-2 font-weight-bold red--text">
+            <div class="subtitle-2 font-weight-bold red--text tabular-num">
               Rp {{ Number(selectedCancelOrder.total_bill || 0).toLocaleString('id-ID') }}
             </div>
           </div>
@@ -254,6 +283,11 @@ export default {
       startDate: firstDay,
       endDate: lastDay,
       statusFilter: 'Semua status',
+      page: 1,
+      perPage: 10,
+      apiRecords: [],
+      apiSummary: null,
+      apiPagination: null,
       isLoading: false,
       payingId: null,
       cancelingId: null,
@@ -268,6 +302,48 @@ export default {
   },
   computed: {
     ...mapGetters(['orders', 'summary', 'setting']),
+    hasApiPaginatedPayload() {
+      return Array.isArray(this.apiRecords) && this.apiPagination !== null;
+    },
+    fallbackOrdersList() {
+      return Array.isArray(this.orders) ? this.orders : [];
+    },
+    activeSummary() {
+      if (this.apiSummary) {
+        return this.apiSummary;
+      }
+      return this.summary || { total_transactions: 0, omzet: 0 };
+    },
+    effectiveTotal() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.total !== undefined) {
+        return Number(this.apiPagination.total || 0);
+      }
+      return this.fallbackOrdersList.length;
+    },
+    effectiveLastPage() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.last_page !== undefined) {
+        return Math.max(1, Number(this.apiPagination.last_page || 1));
+      }
+      return Math.max(1, Math.ceil(this.fallbackOrdersList.length / this.perPage));
+    },
+    displayedOrders() {
+      if (this.hasApiPaginatedPayload) {
+        return this.apiRecords;
+      }
+      const start = (this.page - 1) * this.perPage;
+      return this.fallbackOrdersList.slice(start, start + this.perPage);
+    },
+    rangeText() {
+      if (this.effectiveTotal === 0 || this.displayedOrders.length === 0) {
+        return '0–0';
+      }
+      if (this.hasApiPaginatedPayload && this.apiPagination.from !== undefined && this.apiPagination.to !== undefined) {
+        return `${this.apiPagination.from}–${this.apiPagination.to}`;
+      }
+      const start = (this.page - 1) * this.perPage + 1;
+      const end = Math.min(this.effectiveTotal, start + this.displayedOrders.length - 1);
+      return `${start}–${end}`;
+    },
   },
   async created() {
     await Promise.all([
@@ -292,15 +368,53 @@ export default {
       if (item.rawMaterial && item.rawMaterial.name) return item.rawMaterial.name;
       return 'Produk';
     },
+    onFilterChange() {
+      this.page = 1;
+      this.loadOrders();
+    },
+    onPerPageChange() {
+      this.page = 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadOrders();
+      }
+    },
+    onPageChange(nextPage) {
+      this.page = nextPage || 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadOrders();
+      }
+    },
     async loadOrders() {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('fetchOrders', {
-          start_date: this.startDate,
-          end_date: this.endDate,
-          status: this.statusFilter
+        const res = await apiClient.get('/orders', {
+          params: {
+            start_date: this.startDate,
+            end_date: this.endDate,
+            status: this.statusFilter,
+            page: this.page,
+            per_page: this.perPage,
+            _t: Date.now(),
+          },
         });
+
+        const body = res && res.data ? res.data : null;
+        if (body && Array.isArray(body.orders) && body.pagination) {
+          this.apiRecords = body.orders;
+          this.apiSummary = body.summary || null;
+          this.apiPagination = body.pagination;
+          this.page = Number(body.pagination.current_page || this.page || 1);
+        } else {
+          this.apiRecords = [];
+          this.apiSummary = null;
+          this.apiPagination = null;
+          await this.$store.dispatch('fetchOrders', {
+            start_date: this.startDate,
+            end_date: this.endDate,
+            status: this.statusFilter,
+          });
+        }
       } catch (err) {
         if (err && err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -421,3 +535,9 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.tabular-num {
+  font-variant-numeric: tabular-nums;
+}
+</style>

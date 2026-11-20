@@ -52,10 +52,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="filteredRawMaterials.length === 0">
+            <tr v-if="displayedRawMaterials.length === 0">
               <td colspan="8" class="text-center py-8 grey--text">Belum ada data bahan baku yang ditemukan.</td>
             </tr>
-            <tr v-for="rm in filteredRawMaterials" :key="rm.id">
+            <tr v-for="rm in displayedRawMaterials" :key="rm.id">
               <td>
                 <v-avatar size="42" class="grey lighten-3 rounded-lg" tile>
                   <img v-if="rm.cover" :src="rm.cover" alt="Cover" style="object-fit: cover;" />
@@ -66,13 +66,13 @@
                 <div class="font-weight-bold">{{ rm.name }}</div>
                 <div class="caption grey--text">{{ rm.unit }}</div>
               </td>
-              <td>{{ rm.stock }} {{ rm.unit }}</td>
-              <td>{{ rm.min_stock }}</td>
-              <td>Rp {{ Number(rm.cost_price || 0).toLocaleString('id-ID') }}</td>
+              <td class="tabular-num">{{ rm.stock }} {{ rm.unit }}</td>
+              <td class="tabular-num">{{ rm.min_stock }}</td>
+              <td class="tabular-num">Rp {{ Number(rm.cost_price || 0).toLocaleString('id-ID') }}</td>
               <td>
                 <div v-if="rm.is_sellable">
                   <v-chip x-small color="teal lighten-5" class="teal--text font-weight-bold mb-1">Aktif</v-chip>
-                  <div class="caption font-weight-bold">Rp {{ Number(rm.sell_price || 0).toLocaleString('id-ID') }}</div>
+                  <div class="caption font-weight-bold tabular-num">Rp {{ Number(rm.sell_price || 0).toLocaleString('id-ID') }}</div>
                 </div>
                 <span v-else class="caption grey--text">Tidak Dijual</span>
               </td>
@@ -104,6 +104,35 @@
             </tr>
           </tbody>
         </v-simple-table>
+      </div>
+
+      <!-- Footer Paging (10, 20, 50 data) -->
+      <div class="d-flex flex-wrap justify-space-between align-center pa-3 border-top">
+        <div class="d-flex flex-wrap align-center mb-2 mb-sm-0">
+          <span class="caption grey--text mr-2">Tampilkan:</span>
+          <v-select
+            v-model="perPage"
+            :items="[10, 20, 50]"
+            outlined
+            dense
+            hide-details
+            class="rounded-lg"
+            style="width: 85px;"
+            @change="onPerPageChange"
+          ></v-select>
+          <span class="caption grey--text ml-3 tabular-num">
+            Menampilkan {{ rangeText }} dari {{ effectiveTotal }} data
+          </span>
+        </div>
+
+        <v-pagination
+          v-model="page"
+          :length="effectiveLastPage"
+          :total-visible="5"
+          color="#0f4c3a"
+          circle
+          @input="onPageChange"
+        ></v-pagination>
       </div>
     </v-card>
 
@@ -263,6 +292,11 @@ export default {
   name: 'RawMaterialsView',
   data: () => ({
     searchQuery: '',
+    searchTimer: null,
+    page: 1,
+    perPage: 10,
+    apiRecords: [],
+    apiPagination: null,
     dialogAdd: false,
     dialogOpname: false,
     targetRm: null,
@@ -292,18 +326,67 @@ export default {
   }),
   computed: {
     ...mapGetters(['rawMaterials']),
-    filteredRawMaterials() {
+    hasApiPaginatedPayload() {
+      return Array.isArray(this.apiRecords) && this.apiPagination !== null;
+    },
+    fallbackFilteredList() {
       const list = Array.isArray(this.rawMaterials) ? this.rawMaterials : [];
       if (!this.searchQuery) return list;
       const q = this.searchQuery.toLowerCase();
-      return list.filter(rm => rm.name && rm.name.toLowerCase().includes(q));
-    }
+      return list.filter((rm) => rm.name && rm.name.toLowerCase().includes(q));
+    },
+    effectiveTotal() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.total !== undefined) {
+        return Number(this.apiPagination.total || 0);
+      }
+      return this.fallbackFilteredList.length;
+    },
+    effectiveLastPage() {
+      if (this.hasApiPaginatedPayload && this.apiPagination.last_page !== undefined) {
+        return Math.max(1, Number(this.apiPagination.last_page || 1));
+      }
+      return Math.max(1, Math.ceil(this.fallbackFilteredList.length / this.perPage));
+    },
+    displayedRawMaterials() {
+      if (this.hasApiPaginatedPayload) {
+        return this.apiRecords;
+      }
+      const start = (this.page - 1) * this.perPage;
+      return this.fallbackFilteredList.slice(start, start + this.perPage);
+    },
+    rangeText() {
+      if (this.effectiveTotal === 0 || this.displayedRawMaterials.length === 0) {
+        return '0–0';
+      }
+      if (this.hasApiPaginatedPayload && this.apiPagination.from !== undefined && this.apiPagination.to !== undefined) {
+        return `${this.apiPagination.from}–${this.apiPagination.to}`;
+      }
+      const start = (this.page - 1) * this.perPage + 1;
+      const end = Math.min(this.effectiveTotal, start + this.displayedRawMaterials.length - 1);
+      return `${start}–${end}`;
+    },
+  },
+  watch: {
+    searchQuery() {
+      this.page = 1;
+      if (this.hasApiPaginatedPayload) {
+        clearTimeout(this.searchTimer);
+        this.searchTimer = setTimeout(() => {
+          this.loadMaterials();
+        }, 250);
+      }
+    },
   },
   async created() {
     await Promise.all([
       this.loadCategories(),
       this.loadMaterials(),
     ]);
+  },
+  beforeDestroy() {
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+    }
   },
   methods: {
     normalizeId(val) {
@@ -321,16 +404,46 @@ export default {
         const raw = res && res.data
           ? (Array.isArray(res.data.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []))
           : [];
-        this.categoriesList = raw.map(c => Object.assign({}, c, { id: this.normalizeId(c.id) }));
+        this.categoriesList = raw.map((c) => Object.assign({}, c, { id: this.normalizeId(c.id) }));
       } catch (err) {
         this.categoriesList = [];
+      }
+    },
+    onPerPageChange() {
+      this.page = 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadMaterials();
+      }
+    },
+    onPageChange(nextPage) {
+      this.page = nextPage || 1;
+      if (this.hasApiPaginatedPayload) {
+        this.loadMaterials();
       }
     },
     async loadMaterials() {
       this.isLoading = true;
       this.errorMessage = '';
       try {
-        await this.$store.dispatch('fetchPosData');
+        const res = await apiClient.get('/raw-materials', {
+          params: {
+            page: this.page,
+            per_page: this.perPage,
+            search: (this.searchQuery || '').trim(),
+            _t: Date.now(),
+          },
+        });
+
+        const body = res && res.data ? res.data : null;
+        if (body && Array.isArray(body.data) && body.pagination) {
+          this.apiRecords = body.data;
+          this.apiPagination = body.pagination;
+          this.page = Number(body.pagination.current_page || this.page || 1);
+        } else {
+          this.apiRecords = [];
+          this.apiPagination = null;
+          await this.$store.dispatch('fetchPosData');
+        }
       } catch (err) {
         if (err && err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
@@ -422,7 +535,11 @@ export default {
           await apiClient.post('/raw-materials', formData);
         }
 
-        await this.$store.dispatch('fetchPosData');
+        this.page = 1;
+        await Promise.all([
+          this.loadMaterials(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
         this.dialogAdd = false;
       } catch (err) {
         if (err && err.response && err.response.data && err.response.data.errors) {
@@ -440,7 +557,10 @@ export default {
       this.errorMessage = '';
       try {
         await apiClient.delete(`/raw-materials/${id}`);
-        await this.$store.dispatch('fetchPosData');
+        await Promise.all([
+          this.loadMaterials(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
       } catch (err) {
         this.errorMessage = 'Gagal menghapus bahan baku dari database.';
       } finally {
@@ -460,7 +580,10 @@ export default {
         await apiClient.post(`/raw-materials/${this.targetRm.id}/opname`, {
           actual_stock: Number(this.actualStock),
         });
-        await this.$store.dispatch('fetchPosData');
+        await Promise.all([
+          this.loadMaterials(),
+          this.$store.dispatch('fetchPosData'),
+        ]);
         this.dialogOpname = false;
       } catch (err) {
         this.errorMessage = 'Gagal menyimpan stok opname bahan baku.';
@@ -471,3 +594,9 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.tabular-num {
+  font-variant-numeric: tabular-nums;
+}
+</style>
