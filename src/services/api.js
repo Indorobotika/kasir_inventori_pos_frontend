@@ -1,4 +1,3 @@
-
 import axios from 'axios';
 
 const apiClient = axios.create({
@@ -11,14 +10,21 @@ const apiClient = axios.create({
   withCredentials: false,
 });
 
+let isRedirecting = false;
+
 // Request Interceptor
 apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
+    config.headers = config.headers || {};
 
     if (token) {
-      config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // Biarkan browser/Axios menentukan multipart boundary otomatis saat mengirim FormData
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
     }
 
     return config;
@@ -27,37 +33,43 @@ apiClient.interceptors.request.use(
 );
 
 // Response Interceptor
-let isRedirecting = false;
-
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    isRedirecting = false;
+    return response;
+  },
   (error) => {
-    if (error.response) {
+    const reqUrl = (error && error.config && error.config.url) || '';
+
+    if (error && error.response) {
       const status = error.response.status;
 
       console.error(
         'API Error:',
-        error.config?.url,
+        reqUrl,
         status,
         error.response.data
       );
 
-      if (status === 401 && !isRedirecting) {
-        isRedirecting = true;
+      const isLoginRequest = reqUrl.includes('/login');
 
+      if (status === 401 && !isLoginRequest && !isRedirecting) {
+        isRedirecting = true;
         localStorage.removeItem('token');
 
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
+        } else {
+          isRedirecting = false;
         }
       }
-    } else if (error.code === 'ECONNABORTED') {
-      console.error('API Timeout:', error.config?.url);
+    } else if (error && error.code === 'ECONNABORTED') {
+      console.error('API Timeout:', reqUrl);
     } else {
       console.error(
         'Network Error:',
-        error.config?.url,
-        error.message
+        reqUrl,
+        error ? error.message : 'Unknown error'
       );
     }
 

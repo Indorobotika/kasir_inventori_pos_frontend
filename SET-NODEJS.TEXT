@@ -1,0 +1,2 @@
+$env:Path = "E:\plan_indorobotika\indorobotika\node-v26.13.1-win-x64;$env:Path"
+npm.cmd run serve

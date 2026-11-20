@@ -6,14 +6,14 @@
         <div class="caption grey--text text--darken-1">Produk retail dan produksi sendiri, lengkap dengan resep dan gambar cover display.</div>
       </div>
       <div class="d-flex align-center">
-        <v-btn outlined rounded class="mr-2" :color="$vuetify.theme.dark ? 'white' : ''" @click="dialogCat = true">Kategori</v-btn>
+        <v-btn outlined rounded class="mr-2" :color="$vuetify.theme.dark ? 'white' : ''" @click="openCategoryDialog">Kategori</v-btn>
         <v-btn color="#0f4c3a" dark rounded depressed @click="openAddDialog">
           <v-icon left small>mdi-plus</v-icon> Produk Baru
         </v-btn>
       </div>
     </div>
 
-    <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-4">
+    <v-alert v-if="errorMessage && !dialogCat && !dialogAdd && !dialogOpname" type="error" dense outlined class="rounded-lg mb-4">
       {{ errorMessage }}
     </v-alert>
 
@@ -71,6 +71,16 @@
               </td>
               <td>
                 <v-chip
+                  v-if="p.source_type === 'raw_material'"
+                  x-small
+                  :color="$vuetify.theme.dark ? 'teal darken-4' : 'teal lighten-5'"
+                  :class="$vuetify.theme.dark ? 'teal--text text--lighten-3' : 'teal--text'"
+                  class="font-weight-bold"
+                >
+                  Bahan Dijual
+                </v-chip>
+                <v-chip
+                  v-else
                   x-small
                   :color="$vuetify.theme.dark ? (p.product_type === 'resep' ? 'purple darken-4' : 'blue darken-4') : (p.product_type === 'resep' ? 'purple lighten-5' : 'blue lighten-5')"
                   :class="$vuetify.theme.dark ? (p.product_type === 'resep' ? 'purple--text text--lighten-3' : 'blue--text text--lighten-3') : (p.product_type === 'resep' ? 'purple--text' : 'blue--text')"
@@ -82,21 +92,27 @@
               <td class="font-weight-bold">Rp {{ Number(p.price || 0).toLocaleString('id-ID') }}</td>
               <td>{{ p.stock !== null && p.stock !== undefined ? p.stock : '—' }}</td>
               <td class="text-right">
-                <v-btn v-if="p.product_type !== 'resep'" text x-small color="#0f4c3a" @click="openOpname(p)" class="mr-1">Opname</v-btn>
+                <template v-if="p.source_type === 'raw_material'">
+                  <v-btn text x-small color="#0f4c3a" class="mr-1" @click="openOpname(p)">Opname</v-btn>
+                  <v-btn text x-small color="blue" :to="{ name: 'RawMaterials' }">Atur di Bahan Baku</v-btn>
+                </template>
+                <template v-else>
+                  <v-btn v-if="p.product_type !== 'resep'" text x-small color="#0f4c3a" class="mr-1" @click="openOpname(p)">Opname</v-btn>
 
-                <v-btn icon x-small color="blue" class="mr-1" @click="openEditDialog(p)">
-                  <v-icon small>mdi-pencil-outline</v-icon>
-                </v-btn>
+                  <v-btn icon x-small color="blue" class="mr-1" @click="openEditDialog(p)">
+                    <v-icon small>mdi-pencil-outline</v-icon>
+                  </v-btn>
 
-                <v-btn
-                  icon
-                  x-small
-                  color="red"
-                  :loading="deletingId === p.id"
-                  @click="deleteProduct(p.id)"
-                >
-                  <v-icon small>mdi-delete-outline</v-icon>
-                </v-btn>
+                  <v-btn
+                    icon
+                    x-small
+                    color="red"
+                    :loading="deletingId === p.id"
+                    @click="deleteProduct(p.id)"
+                  >
+                    <v-icon small>mdi-delete-outline</v-icon>
+                  </v-btn>
+                </template>
               </td>
             </tr>
           </tbody>
@@ -111,6 +127,10 @@
           <h3 class="headline font-weight-bold">Kategori Produk</h3>
           <v-btn icon small :disabled="isSavingCat" @click="dialogCat = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
+
+        <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-3">
+          {{ errorMessage }}
+        </v-alert>
 
         <div class="mb-3">
           <v-chip
@@ -155,6 +175,10 @@
           <h3 class="headline font-weight-bold">{{ isEditMode ? 'Edit Produk' : 'Tambah Produk Baru' }}</h3>
           <v-btn icon small :disabled="isSaving" @click="dialogAdd = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
+
+        <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-3">
+          {{ errorMessage }}
+        </v-alert>
 
         <v-text-field v-model="form.sku" label="SKU (kosongkan untuk auto-generate)" outlined dense class="rounded-lg mb-1"></v-text-field>
         <v-text-field v-model="form.title" label="Nama Produk" outlined dense class="rounded-lg mb-1"></v-text-field>
@@ -222,14 +246,15 @@
           class="rounded-lg mb-1"
         ></v-select>
 
-        <v-text-field v-model.number="form.cost_price" label="Harga Modal / HPP (Rp)" type="number" outlined dense class="rounded-lg mb-1"></v-text-field>
-        <v-text-field v-model.number="form.price" label="Harga Jual Offline (Rp)" type="number" outlined dense class="rounded-lg mb-1"></v-text-field>
+        <v-text-field v-model.number="form.cost_price" label="Harga Modal / HPP (Rp)" type="number" min="0" outlined dense class="rounded-lg mb-1"></v-text-field>
+        <v-text-field v-model.number="form.price" label="Harga Jual Offline (Rp)" type="number" min="0" outlined dense class="rounded-lg mb-1"></v-text-field>
 
         <v-text-field
           v-if="form.product_type === 'retail'"
           v-model.number="form.stock"
           label="Stok Awal"
           type="number"
+          min="0"
           outlined
           dense
           class="rounded-lg mb-3"
@@ -265,7 +290,8 @@
               v-model.number="recipe.qty_needed"
               label="Takaran"
               type="number"
-              step="0.01"
+              step="0.0001"
+              min="0"
               outlined
               dense
               hide-details
@@ -286,7 +312,7 @@
           rounded
           depressed
           :loading="isSaving"
-          :disabled="!form.title || !form.category_id || form.price <= 0"
+          :disabled="!isProductFormValid"
           @click="submitProductForm"
         >
           {{ isEditMode ? 'Simpan Perubahan' : 'Simpan Produk' }}
@@ -301,10 +327,16 @@
           <h3 class="subtitle-1 font-weight-bold">Stok Opname: {{ opnameTarget && opnameTarget.title }}</h3>
           <v-btn icon small :disabled="isSavingOpname" @click="dialogOpname = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
+
+        <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-3">
+          {{ errorMessage }}
+        </v-alert>
+
         <v-text-field
           v-model.number="actualStock"
           label="Stok Fisik Aktual"
           type="number"
+          min="0"
           outlined
           dense
           class="rounded-lg mb-3"
@@ -379,7 +411,20 @@ export default {
         (p.title && p.title.toLowerCase().includes(q)) ||
         (p.sku && p.sku.toLowerCase().includes(q))
       );
-    }
+    },
+    isProductFormValid() {
+      const titleOk = Boolean(this.form.title && this.form.title.trim());
+      const catOk = Boolean(this.form.category_id);
+      const priceOk = !Number.isNaN(Number(this.form.price)) && Number(this.form.price) > 0;
+      if (!titleOk || !catOk || !priceOk) return false;
+
+      if (this.form.product_type === 'resep' && this.form.recipes.length > 0) {
+        return this.form.recipes.every(
+          r => Boolean(r.raw_material_id) && !Number.isNaN(Number(r.qty_needed)) && Number(r.qty_needed) > 0
+        );
+      }
+      return true;
+    },
   },
   async created() {
     await Promise.all([
@@ -392,7 +437,7 @@ export default {
     normalizeId(val) {
       if (val === null || val === undefined || val === '') return null;
       const num = Number(val);
-      return Number.isNaN(num) ? val : num;
+      return Number.isNaN(num) ? String(val) : num;
     },
     extractListPayload(response) {
       if (!response || !response.data) return [];
@@ -460,12 +505,18 @@ export default {
         this.isLoading = false;
       }
     },
+    openCategoryDialog() {
+      this.errorMessage = '';
+      this.newCategoryName = '';
+      this.dialogCat = true;
+    },
     openAddDialog() {
       this.isEditMode = false;
       this.editProductId = null;
       this.coverFile = null;
       this.previewCoverUrl = '';
       this.removeCover = false;
+      this.errorMessage = '';
       const defaultCategoryId = this.categoriesList.length > 0
         ? this.normalizeId(this.categoriesList[0].id)
         : null;
@@ -495,6 +546,7 @@ export default {
       this.coverFile = null;
       this.previewCoverUrl = p.cover || '';
       this.removeCover = false;
+      this.errorMessage = '';
 
       const resolvedCategoryId = p.category_id !== null && p.category_id !== undefined
         ? this.normalizeId(p.category_id)
@@ -525,11 +577,12 @@ export default {
       this.dialogAdd = true;
     },
     previewCoverImage(file) {
+      this.previewCoverUrl = '';
       if (!file) return;
       this.removeCover = false;
       const reader = new FileReader();
       reader.onload = (e) => {
-        this.previewCoverUrl = e.target.result;
+        this.previewCoverUrl = e.target.result || '';
       };
       reader.readAsDataURL(file);
     },
@@ -553,9 +606,13 @@ export default {
         this.dialogCat = false;
         await this.loadCategories();
       } catch (err) {
-        this.errorMessage =
-          (err && err.response && err.response.data && err.response.data.message) ||
-          'Gagal menambahkan kategori baru.';
+        if (err && err.response && err.response.data && err.response.data.errors) {
+          this.errorMessage = Object.values(err.response.data.errors).flat().join(', ');
+        } else {
+          this.errorMessage =
+            (err && err.response && err.response.data && err.response.data.message) ||
+            'Gagal menambahkan kategori baru.';
+        }
       } finally {
         this.isSavingCat = false;
       }
@@ -565,33 +622,35 @@ export default {
       this.errorMessage = '';
       try {
         const formData = new FormData();
-        formData.append('sku', this.form.sku ? this.form.sku : '');
-        formData.append('title', this.form.title);
-        formData.append('category_id', this.form.category_id);
+        formData.append('sku', this.form.sku ? this.form.sku.trim() : '');
+        formData.append('title', this.form.title.trim());
+        formData.append('category_id', String(this.form.category_id));
         formData.append('unit', this.form.unit);
         formData.append('product_type', this.form.product_type);
-        formData.append('cost_price', Number(this.form.cost_price || 0));
-        formData.append('price', Number(this.form.price));
-        formData.append('stock', this.form.product_type === 'resep' ? 0 : Number(this.form.stock || 0));
+        formData.append('cost_price', String(Number(this.form.cost_price || 0)));
+        formData.append('price', String(Number(this.form.price)));
+        formData.append('stock', this.form.product_type === 'resep' ? '0' : String(Number(this.form.stock || 0)));
 
         if (this.coverFile) {
           formData.append('cover', this.coverFile);
         } else if (this.isEditMode && this.removeCover) {
-          formData.append('remove_cover', 1);
+          formData.append('remove_cover', '1');
         }
 
-        if (this.form.product_type === 'resep' && this.form.recipes.length > 0) {
-          formData.append('recipes', JSON.stringify(this.form.recipes));
+        if (this.form.product_type === 'resep') {
+          const validRecipes = this.form.recipes
+            .filter(r => r.raw_material_id && Number(r.qty_needed) > 0)
+            .map(r => ({
+              raw_material_id: this.normalizeId(r.raw_material_id),
+              qty_needed: Number(r.qty_needed),
+            }));
+          formData.append('recipes', JSON.stringify(validRecipes));
         }
-
-        const config = {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        };
 
         if (this.isEditMode) {
-          await apiClient.post(`/products/${this.editProductId}?_method=PUT`, formData, config);
+          await apiClient.post(`/products/${this.editProductId}?_method=PUT`, formData);
         } else {
-          await apiClient.post('/products', formData, config);
+          await apiClient.post('/products', formData);
         }
 
         await this.$store.dispatch('fetchPosData');
@@ -621,16 +680,24 @@ export default {
     },
     openOpname(p) {
       this.opnameTarget = p;
-      this.actualStock = p.stock;
+      this.actualStock = Number(p.stock || 0);
+      this.errorMessage = '';
       this.dialogOpname = true;
     },
     async saveOpname() {
       this.isSavingOpname = true;
       this.errorMessage = '';
       try {
-        await apiClient.post(`/products/${this.opnameTarget.id}/opname`, {
-          actual_stock: this.actualStock,
-        });
+        if (this.opnameTarget && this.opnameTarget.source_type === 'raw_material') {
+          const rmId = this.opnameTarget.raw_material_id || String(this.opnameTarget.id).replace(/^rm_/, '');
+          await apiClient.post(`/raw-materials/${rmId}/opname`, {
+            actual_stock: Number(this.actualStock),
+          });
+        } else {
+          await apiClient.post(`/products/${this.opnameTarget.id}/opname`, {
+            actual_stock: Number(this.actualStock),
+          });
+        }
         await this.$store.dispatch('fetchPosData');
         this.dialogOpname = false;
       } catch (err) {

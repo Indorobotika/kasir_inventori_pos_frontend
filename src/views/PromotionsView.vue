@@ -6,12 +6,12 @@
         <h1 class="headline font-weight-bold">Promo</h1>
         <div class="caption grey--text text--darken-1">Diskon otomatis diterapkan di kasir sesuai minimal belanja.</div>
       </div>
-      <v-btn color="#0f4c3a" dark rounded depressed @click="dialog = true">
+      <v-btn color="#0f4c3a" dark rounded depressed @click="openAddDialog">
         <v-icon left small>mdi-plus</v-icon> Promo Baru
       </v-btn>
     </div>
 
-    <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-4">
+    <v-alert v-if="errorMessage && !dialog" type="error" dense outlined class="rounded-lg mb-4">
       {{ errorMessage }}
     </v-alert>
 
@@ -75,6 +75,10 @@
           <v-btn icon small :disabled="isSaving" @click="dialog = false"><v-icon>mdi-close</v-icon></v-btn>
         </div>
 
+        <v-alert v-if="errorMessage" type="error" dense outlined class="rounded-lg mb-3">
+          {{ errorMessage }}
+        </v-alert>
+
         <v-text-field v-model="form.title" label="Judul Promo" outlined dense class="rounded-lg"></v-text-field>
         <v-select
           v-model="form.typ_promotion_id"
@@ -90,14 +94,17 @@
           v-model.number="form.required"
           label="Minimal Belanja (Rp)"
           type="number"
+          min="0"
           outlined
           dense
           class="rounded-lg"
         ></v-text-field>
         <v-text-field
           v-model.number="form.result"
-          :label="form.typ_promotion_id === 2 ? 'Nilai Diskon (%)' : 'Nilai Diskon (Rp)'"
+          :label="Number(form.typ_promotion_id) === 2 ? 'Nilai Diskon (%)' : 'Nilai Diskon (Rp)'"
           type="number"
+          min="0"
+          :max="Number(form.typ_promotion_id) === 2 ? 100 : undefined"
           outlined
           dense
           class="rounded-lg"
@@ -110,7 +117,7 @@
           rounded
           depressed
           :loading="isSaving"
-          :disabled="!form.title.trim() || form.result <= 0"
+          :disabled="!isFormValid"
           @click="savePromo"
         >
           Simpan Promo
@@ -124,6 +131,16 @@
 import { mapGetters } from 'vuex';
 import apiClient from '@/services/api';
 
+function defaultForm() {
+  return {
+    title: '',
+    typ_promotion_id: 2,
+    required: 50000,
+    result: 10,
+    is_active: 1,
+  };
+}
+
 export default {
   name: 'PromotionsView',
   data: () => ({
@@ -132,22 +149,37 @@ export default {
     isSaving: false,
     deletingId: null,
     errorMessage: '',
-    form: { title: '', typ_promotion_id: 2, required: 50000, result: 10, is_active: 1 },
+    form: defaultForm(),
   }),
   computed: {
     ...mapGetters(['promotions']),
+    isFormValid() {
+      const titleOk = Boolean(this.form.title && this.form.title.trim());
+      const reqVal = Number(this.form.required);
+      const resVal = Number(this.form.result);
+      const reqOk = !Number.isNaN(reqVal) && reqVal >= 0;
+      const resOk = !Number.isNaN(resVal) && resVal > 0 && (
+        Number(this.form.typ_promotion_id) !== 2 || resVal <= 100
+      );
+      return titleOk && reqOk && resOk;
+    },
   },
   async created() {
     await this.loadPromos();
   },
   methods: {
+    openAddDialog() {
+      this.errorMessage = '';
+      this.form = defaultForm();
+      this.dialog = true;
+    },
     async loadPromos() {
       this.isLoading = true;
       this.errorMessage = '';
       try {
         await this.$store.dispatch('fetchPosData');
       } catch (err) {
-        if (err.response && err.response.status === 401) {
+        if (err && err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
         } else {
           this.errorMessage = 'Gagal memuat data promo dari server.';
@@ -168,14 +200,20 @@ export default {
           is_active: 1,
         };
         await apiClient.post('/promotions', payload);
-        await this.$store.dispatch('fetchPropsData'); // disesuaikan jika perlu
         await this.$store.dispatch('fetchPosData');
         this.dialog = false;
-        this.form = { title: '', typ_promotion_id: 2, required: 50000, result: 10, is_active: 1 };
+        this.form = defaultForm();
       } catch (err) {
-        this.errorMessage =
-          (err.response && err.response.data && err.response.data.message) ||
-          'Gagal menyimpan promo baru ke database.';
+        if (err && err.response && err.response.data) {
+          const errors = err.response.data.errors;
+          if (errors) {
+            this.errorMessage = Object.values(errors).flat().join(', ');
+          } else {
+            this.errorMessage = err.response.data.message || 'Gagal menyimpan promo baru ke database.';
+          }
+        } else {
+          this.errorMessage = 'Gagal terhubung ke server.';
+        }
       } finally {
         this.isSaving = false;
       }
