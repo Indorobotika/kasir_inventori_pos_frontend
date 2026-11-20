@@ -17,7 +17,7 @@
       {{ errorMessage }}
     </v-alert>
 
-    <!-- Kotak Pencarian Produk yang Disesuaikan Dark Mode & Mobile -->
+    <!-- Kotak Pencarian Produk -->
     <v-card flat outlined class="rounded-xl pa-3 mb-4" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
       <v-text-field
         v-model="searchQuery"
@@ -31,7 +31,7 @@
       ></v-text-field>
     </v-card>
 
-    <!-- Tabel Daftar Produk dengan Wrapper Scroll Horizontal untuk Mobile -->
+    <!-- Tabel Daftar Produk -->
     <v-card flat outlined class="rounded-xl overflow-hidden" :color="$vuetify.theme.dark ? '#1e1e1e' : 'white'">
       <div v-if="isLoading" class="text-center py-8">
         <v-progress-circular indeterminate color="#0f4c3a"></v-progress-circular>
@@ -83,13 +83,11 @@
               <td>{{ p.stock !== null && p.stock !== undefined ? p.stock : '—' }}</td>
               <td class="text-right">
                 <v-btn v-if="p.product_type !== 'resep'" text x-small color="#0f4c3a" @click="openOpname(p)" class="mr-1">Opname</v-btn>
-                
-                <!-- Tombol Edit Produk -->
+
                 <v-btn icon x-small color="blue" class="mr-1" @click="openEditDialog(p)">
                   <v-icon small>mdi-pencil-outline</v-icon>
                 </v-btn>
 
-                <!-- Tombol Hapus Produk -->
                 <v-btn
                   icon
                   x-small
@@ -160,7 +158,7 @@
 
         <v-text-field v-model="form.sku" label="SKU (kosongkan untuk auto-generate)" outlined dense class="rounded-lg mb-1"></v-text-field>
         <v-text-field v-model="form.title" label="Nama Produk" outlined dense class="rounded-lg mb-1"></v-text-field>
-        
+
         <v-select
           v-model="form.category_id"
           :items="categoriesList"
@@ -191,6 +189,16 @@
               prepend-icon="mdi-camera"
               @change="previewCoverImage"
             ></v-file-input>
+            <v-btn
+              v-if="isEditMode && previewCoverUrl"
+              x-small
+              text
+              color="red"
+              class="mt-1 px-0"
+              @click="clearCoverImage"
+            >
+              <v-icon left x-small>mdi-close-circle-outline</v-icon> Hapus Gambar
+            </v-btn>
           </div>
         </div>
 
@@ -202,7 +210,7 @@
           dense
           class="rounded-lg mb-1"
         ></v-select>
-        
+
         <v-select
           v-model="form.product_type"
           :items="productTypes"
@@ -216,7 +224,7 @@
 
         <v-text-field v-model.number="form.cost_price" label="Harga Modal / HPP (Rp)" type="number" outlined dense class="rounded-lg mb-1"></v-text-field>
         <v-text-field v-model.number="form.price" label="Harga Jual Offline (Rp)" type="number" outlined dense class="rounded-lg mb-1"></v-text-field>
-        
+
         <v-text-field
           v-if="form.product_type === 'retail'"
           v-model.number="form.stock"
@@ -341,6 +349,7 @@ export default {
     rawMaterialsList: [],
     coverFile: null,
     previewCoverUrl: '',
+    removeCover: false,
     unitOptions: ['pcs', 'cup', 'botol', 'porsi', 'box', 'pack', 'bowl', 'plate'],
     productTypes: [
       { text: 'Retail', value: 'retail' },
@@ -363,46 +372,77 @@ export default {
   computed: {
     ...mapGetters(['products']),
     filteredProducts() {
-      if (!this.searchQuery) return this.products;
+      const list = Array.isArray(this.products) ? this.products : [];
+      if (!this.searchQuery) return list;
       const q = this.searchQuery.toLowerCase();
-      return this.products.filter(p => 
-        p.title.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q))
+      return list.filter(p =>
+        (p.title && p.title.toLowerCase().includes(q)) ||
+        (p.sku && p.sku.toLowerCase().includes(q))
       );
     }
   },
   async created() {
-    await this.loadCategories();
-    await this.loadRawMaterials();
-    await this.loadProducts();
+    await Promise.all([
+      this.loadCategories(),
+      this.loadRawMaterials(),
+      this.loadProducts(),
+    ]);
   },
   methods: {
+    normalizeId(val) {
+      if (val === null || val === undefined || val === '') return null;
+      const num = Number(val);
+      return Number.isNaN(num) ? val : num;
+    },
+    extractListPayload(response) {
+      if (!response || !response.data) return [];
+      if (Array.isArray(response.data.data)) return response.data.data;
+      if (Array.isArray(response.data)) return response.data;
+      return [];
+    },
     getCategoryName(p) {
-      if (p.category && p.category.name) {
+      if (p.category && typeof p.category === 'object' && p.category.name) {
         return p.category.name;
       }
-      if (p.category_id && this.categoriesList.length > 0) {
-        const found = this.categoriesList.find(c => c.id === p.category_id);
+      if (p.category_name && p.category_name !== 'Umum') {
+        return p.category_name;
+      }
+      const targetId = this.normalizeId(p.category_id);
+      if (targetId !== null && this.categoriesList.length > 0) {
+        const found = this.categoriesList.find(c => this.normalizeId(c.id) === targetId);
         if (found) return found.name;
       }
-      return '-';
+      return p.category_name || '-';
     },
     async loadCategories() {
       try {
-        const response = await apiClient.get('/categories');
-        this.categoriesList = response.data.data || response.data || [];
+        const response = await apiClient.get('/categories', {
+          params: { _t: Date.now() }
+        });
+        const items = this.extractListPayload(response);
+        this.categoriesList = items.map(c => Object.assign({}, c, {
+          id: this.normalizeId(c.id)
+        }));
         if (this.categoriesList.length > 0 && !this.form.category_id) {
           this.form.category_id = this.categoriesList[0].id;
         }
       } catch (err) {
         console.error('Gagal memuat kategori:', err);
+        this.categoriesList = [];
       }
     },
     async loadRawMaterials() {
       try {
-        const response = await apiClient.get('/raw-materials');
-        this.rawMaterialsList = response.data.data || response.data || [];
+        const response = await apiClient.get('/raw-materials', {
+          params: { _t: Date.now() }
+        });
+        const items = this.extractListPayload(response);
+        this.rawMaterialsList = items.map(rm => Object.assign({}, rm, {
+          id: this.normalizeId(rm.id)
+        }));
       } catch (err) {
         console.error('Gagal memuat bahan baku:', err);
+        this.rawMaterialsList = [];
       }
     },
     async loadProducts() {
@@ -411,7 +451,7 @@ export default {
       try {
         await this.$store.dispatch('fetchPosData');
       } catch (err) {
-        if (err.response && err.response.status === 401) {
+        if (err && err.response && err.response.status === 401) {
           this.$store.commit('SET_AUTH', { token: null, user: null });
         } else {
           this.errorMessage = 'Gagal memuat data produk dari server.';
@@ -425,13 +465,14 @@ export default {
       this.editProductId = null;
       this.coverFile = null;
       this.previewCoverUrl = '';
-      if (this.categoriesList.length > 0) {
-        this.form.category_id = this.categoriesList[0].id;
-      }
+      this.removeCover = false;
+      const defaultCategoryId = this.categoriesList.length > 0
+        ? this.normalizeId(this.categoriesList[0].id)
+        : null;
       this.form = {
         sku: '',
         title: '',
-        category_id: this.categoriesList[0]?.id || null,
+        category_id: defaultCategoryId,
         unit: 'pcs',
         product_type: 'retail',
         cost_price: 0,
@@ -441,34 +482,61 @@ export default {
       };
       this.dialogAdd = true;
     },
-    openEditDialog(p) {
+    async openEditDialog(p) {
+      if (this.categoriesList.length === 0) {
+        await this.loadCategories();
+      }
+      if (this.rawMaterialsList.length === 0) {
+        await this.loadRawMaterials();
+      }
+
       this.isEditMode = true;
       this.editProductId = p.id;
       this.coverFile = null;
       this.previewCoverUrl = p.cover || '';
+      this.removeCover = false;
+
+      const resolvedCategoryId = p.category_id !== null && p.category_id !== undefined
+        ? this.normalizeId(p.category_id)
+        : (p.category && typeof p.category === 'object' && p.category.id !== undefined
+            ? this.normalizeId(p.category.id)
+            : null);
+
+      const mappedRecipes = Array.isArray(p.recipes)
+        ? p.recipes.map(r => ({
+            raw_material_id: r.raw_material_id !== null && r.raw_material_id !== undefined
+              ? this.normalizeId(r.raw_material_id)
+              : (r.raw_material && r.raw_material.id !== undefined ? this.normalizeId(r.raw_material.id) : null),
+            qty_needed: Number(r.qty_needed || 0)
+          }))
+        : [];
+
       this.form = {
         sku: p.sku || '',
         title: p.title || '',
-        category_id: p.category_id,
+        category_id: resolvedCategoryId,
         unit: p.unit || 'pcs',
         product_type: p.product_type || 'retail',
-        cost_price: p.cost_price || 0,
-        price: p.price || 0,
-        stock: p.stock || 0,
-        recipes: p.recipes ? p.recipes.map(r => ({
-          raw_material_id: r.raw_material_id,
-          qty_needed: r.qty_needed
-        })) : []
+        cost_price: Number(p.cost_price || 0),
+        price: Number(p.price || 0),
+        stock: Number(p.stock || 0),
+        recipes: mappedRecipes
       };
       this.dialogAdd = true;
     },
     previewCoverImage(file) {
       if (!file) return;
+      this.removeCover = false;
       const reader = new FileReader();
       reader.onload = (e) => {
         this.previewCoverUrl = e.target.result;
       };
       reader.readAsDataURL(file);
+    },
+    clearCoverImage() {
+      this.coverFile = null;
+      this.previewCoverUrl = '';
+      this.removeCover = true;
     },
     addRecipeRow() {
       this.form.recipes.push({ raw_material_id: null, qty_needed: 1 });
@@ -486,7 +554,7 @@ export default {
         await this.loadCategories();
       } catch (err) {
         this.errorMessage =
-          (err.response && err.response.data && err.response.data.message) ||
+          (err && err.response && err.response.data && err.response.data.message) ||
           'Gagal menambahkan kategori baru.';
       } finally {
         this.isSavingCat = false;
@@ -505,9 +573,11 @@ export default {
         formData.append('cost_price', Number(this.form.cost_price || 0));
         formData.append('price', Number(this.form.price));
         formData.append('stock', this.form.product_type === 'resep' ? 0 : Number(this.form.stock || 0));
-        
+
         if (this.coverFile) {
           formData.append('cover', this.coverFile);
+        } else if (this.isEditMode && this.removeCover) {
+          formData.append('remove_cover', 1);
         }
 
         if (this.form.product_type === 'resep' && this.form.recipes.length > 0) {
@@ -527,11 +597,11 @@ export default {
         await this.$store.dispatch('fetchPosData');
         this.dialogAdd = false;
       } catch (err) {
-        if (err.response && err.response.data && err.response.data.errors) {
+        if (err && err.response && err.response.data && err.response.data.errors) {
           const errs = err.response.data.errors;
           this.errorMessage = Object.values(errs).flat().join(', ');
         } else {
-          this.errorMessage = (err.response && err.response.data && err.response.data.message) || 'Gagal menyimpan produk.';
+          this.errorMessage = (err && err.response && err.response.data && err.response.data.message) || 'Gagal menyimpan produk.';
         }
       } finally {
         this.isSaving = false;

@@ -5,7 +5,16 @@ import apiClient from '@/services/api';
 Vue.use(Vuex);
 
 // Helper untuk mengekstrak array/object baik jika Laravel membungkusnya dengan key .data maupun tidak
-const extractData = (res) => (res.data && res.data.data !== undefined ? res.data.data : res.data);
+const extractData = (res) => {
+  if (!res || !res.data) return null;
+  return res.data.data !== undefined ? res.data.data : res.data;
+};
+
+const normalizeId = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  const num = Number(val);
+  return Number.isNaN(num) ? val : num;
+};
 
 export default new Vuex.Store({
   state: {
@@ -18,7 +27,7 @@ export default new Vuex.Store({
     products: [],
     promotions: [],
     orders: [],
-    summary: { total_transactions: 0, omzet: 0, pending: 0, canceled: 0 }, // Ditambahkan untuk ringkasan pesanan
+    summary: { total_transactions: 0, omzet: 0, pending: 0, canceled: 0 },
     cashflows: [],
     cashflowSummary: { in: 0, out: 0, balance: 0 },
     setting: {
@@ -41,7 +50,7 @@ export default new Vuex.Store({
     rawMaterials: (s) => s.rawMaterials,
     promotions: (s) => s.promotions,
     orders: (s) => s.orders,
-    summary: (s) => s.summary, // Ditambahkan agar dapat diakses oleh mapGetters di OrdersView
+    summary: (s) => s.summary,
     cashflows: (s) => s.cashflows,
     cashflowSummary: (s) => s.cashflowSummary,
     setting: (s) => s.setting,
@@ -61,28 +70,65 @@ export default new Vuex.Store({
       }
     },
     SET_POS_DATA(state, { products, categories, setting, promotions, rawMaterials }) {
-      if (products) {
-        state.products = products.map((p) => ({
-          ...p,
-          title: p.title || p.name || '',
-          category: typeof p.category === 'object' && p.category !== null ? p.category.name : (p.category || 'Umum'),
-          price: Number(p.price || 0),
-          cost_price: Number(p.cost_price || 0),
-          stock: p.stock !== null && p.stock !== undefined ? Number(p.stock) : null,
-        }));
+      if (Array.isArray(products)) {
+        state.products = products.map((p) => {
+          const catObj = typeof p.category === 'object' && p.category !== null ? p.category : null;
+          const resolvedCategoryId =
+            p.category_id !== undefined && p.category_id !== null
+              ? normalizeId(p.category_id)
+              : (catObj && catObj.id !== undefined ? normalizeId(catObj.id) : null);
+
+          const resolvedCategoryName = catObj && catObj.name
+            ? catObj.name
+            : (typeof p.category === 'string' && p.category ? p.category : 'Umum');
+
+          const normalizedRecipes = Array.isArray(p.recipes)
+            ? p.recipes.map((r) => ({
+                ...r,
+                raw_material_id:
+                  r.raw_material_id !== undefined && r.raw_material_id !== null
+                    ? normalizeId(r.raw_material_id)
+                    : (r.raw_material && r.raw_material.id !== undefined ? normalizeId(r.raw_material.id) : null),
+                qty_needed: Number(r.qty_needed || 0),
+              }))
+            : [];
+
+          return {
+            ...p,
+            title: p.title || p.name || '',
+            category_id: resolvedCategoryId,
+            category: catObj || resolvedCategoryName,
+            category_name: resolvedCategoryName,
+            recipes: normalizedRecipes,
+            price: Number(p.price || 0),
+            cost_price: Number(p.cost_price || 0),
+            stock: p.stock !== null && p.stock !== undefined ? Number(p.stock) : null,
+          };
+        });
       }
-      if (categories) {
-        const catNames = categories.map((c) => (typeof c === 'object' ? c.name : c));
+
+      if (Array.isArray(categories)) {
+        const catNames = categories.map((c) => (typeof c === 'object' && c !== null ? c.name : c)).filter(Boolean);
         state.categories = ['Semua', ...new Set(catNames)];
       }
+
       if (setting && typeof setting === 'object') {
         state.setting = { ...state.setting, ...setting };
       }
-      if (promotions) state.promotions = promotions;
-      if (rawMaterials) state.rawMaterials = rawMaterials;
+
+      if (Array.isArray(promotions)) {
+        state.promotions = promotions;
+      }
+
+      if (Array.isArray(rawMaterials)) {
+        state.rawMaterials = rawMaterials.map((rm) => ({
+          ...rm,
+          id: normalizeId(rm.id),
+        }));
+      }
     },
     SET_ORDERS(state, orders) {
-      state.orders = orders;
+      state.orders = orders || [];
     },
     SET_ORDER_SUMMARY(state, summary) {
       if (summary) {
@@ -122,19 +168,23 @@ export default new Vuex.Store({
       state.carts = [];
     },
     COMPLETE_ORDER(state, order) {
-      order.items.forEach((item) => {
-        const prod = state.products.find((p) => p.id === item.id);
-        if (!prod) return;
-        if (prod.type === 'Retail' && prod.stock !== null) {
-          prod.stock = Math.max(0, prod.stock - item.quantity);
-        } else if (prod.type === 'Resep' && prod.recipes) {
-          prod.recipes.forEach((r) => {
-            const rm = state.rawMaterials.find((m) => m.id === r.raw_material_id);
-            if (rm) rm.stock = Math.max(0, Number((rm.stock - r.qty_needed * item.quantity).toFixed(3)));
-          });
-        }
-      });
-      state.orders.unshift(order);
+      if (order && Array.isArray(order.items)) {
+        order.items.forEach((item) => {
+          const prod = state.products.find((p) => p.id === item.id);
+          if (!prod) return;
+          if ((prod.type === 'Retail' || prod.product_type === 'retail') && prod.stock !== null) {
+            prod.stock = Math.max(0, prod.stock - item.quantity);
+          } else if ((prod.type === 'Resep' || prod.product_type === 'resep') && prod.recipes) {
+            prod.recipes.forEach((r) => {
+              const rm = state.rawMaterials.find((m) => normalizeId(m.id) === normalizeId(r.raw_material_id));
+              if (rm) rm.stock = Math.max(0, Number((rm.stock - r.qty_needed * item.quantity).toFixed(3)));
+            });
+          }
+        });
+      }
+      if (order) {
+        state.orders.unshift(order);
+      }
       state.carts = [];
     },
     UPDATE_STOCK_OPNAME(state, { type, id, actualStock }) {
@@ -142,22 +192,21 @@ export default new Vuex.Store({
         const p = state.products.find((i) => i.id === id);
         if (p) p.stock = Number(actualStock);
       } else {
-        const r = state.rawMaterials.find((i) => i.id === id);
+        const r = state.rawMaterials.find((i) => normalizeId(i.id) === normalizeId(id));
         if (r) r.stock = Number(actualStock);
       }
     },
-    ADD_PRODUCT(state, prod) { state.products.push(prod); },
+    ADD_PRODUCT(state, prod) { if (prod) state.products.push(prod); },
     DELETE_PRODUCT(state, id) { state.products = state.products.filter((p) => p.id !== id); },
-    ADD_RAW_MATERIAL(state, rm) { state.rawMaterials.push(rm); },
-    DELETE_RAW_MATERIAL(state, id) { state.rawMaterials = state.rawMaterials.filter((r) => r.id !== id); },
-    ADD_CASHFLOW(state, cf) { state.cashflows.unshift(cf); },
+    ADD_RAW_MATERIAL(state, rm) { if (rm) state.rawMaterials.push(rm); },
+    DELETE_RAW_MATERIAL(state, id) { state.rawMaterials = state.rawMaterials.filter((r) => normalizeId(r.id) !== normalizeId(id)); },
+    ADD_CASHFLOW(state, cf) { if (cf) state.cashflows.unshift(cf); },
     DELETE_CASHFLOW(state, id) { state.cashflows = state.cashflows.filter((c) => c.id !== id); },
-    ADD_PROMO(state, promo) { state.promotions.push(promo); },
+    ADD_PROMO(state, promo) { if (promo) state.promotions.push(promo); },
     DELETE_PROMO(state, id) { state.promotions = state.promotions.filter((p) => p.id !== id); },
     UPDATE_SETTING(state, payload) { state.setting = { ...state.setting, ...payload }; },
   },
   actions: {
-    // 1. Autentikasi Login ke POST /api/login
     async login({ commit, dispatch }, credentials) {
       const res = await apiClient.post('/login', credentials);
 
@@ -184,26 +233,25 @@ export default new Vuex.Store({
       }
     },
 
-    // 2. Mengambil Data Utama Layar Kasir
     async fetchPosData({ commit }) {
+      const ts = Date.now();
       const [prodRes, catRes, setRes, promoRes, rawRes] = await Promise.all([
-        apiClient.get('/products').catch(() => ({ data: [] })),
-        apiClient.get('/categories').catch(() => ({ data: [] })),
-        apiClient.get('/settings').catch(() => ({ data: { data: { store_name: 'Toko Kasir', tax: 11 } } })),
-        apiClient.get('/promotions').catch(() => ({ data: [] })),
-        apiClient.get('/raw-materials').catch(() => ({ data: [] })),
+        apiClient.get('/products', { params: { _t: ts } }),
+        apiClient.get('/categories', { params: { _t: ts } }).catch(() => ({ data: [] })),
+        apiClient.get('/settings', { params: { _t: ts } }).catch(() => ({ data: { data: { store_name: 'Toko Kasir', tax: 11 } } })),
+        apiClient.get('/promotions', { params: { _t: ts } }).catch(() => ({ data: [] })),
+        apiClient.get('/raw-materials', { params: { _t: ts } }).catch(() => ({ data: [] })),
       ]);
 
       commit('SET_POS_DATA', {
-        products: extractData(prodRes),
-        categories: extractData(catRes),
-        setting: extractData(setRes),
-        promotions: extractData(promoRes),
-        rawMaterials: extractData(rawRes),
+        products: extractData(prodRes) || [],
+        categories: extractData(catRes) || [],
+        setting: extractData(setRes) || {},
+        promotions: extractData(promoRes) || [],
+        rawMaterials: extractData(rawRes) || [],
       });
     },
 
-    // 3. Mengirim Transaksi Pembayaran Kasir ke POST /api/payment-pos
     async submitOrder({ commit }, orderPayload) {
       const res = await apiClient.post('/payment-pos', orderPayload);
       const savedOrder = extractData(res) || orderPayload;
@@ -211,11 +259,9 @@ export default new Vuex.Store({
       return savedOrder;
     },
 
-    // 4. Mengambil Riwayat Pesanan dari GET /api/orders
     async fetchOrders({ commit }, payload = {}) {
       try {
-        const response = await apiClient.get('/orders', { params: payload });
-        // Menyimpan data orders dan summary ke state
+        const response = await apiClient.get('/orders', { params: { ...payload, _t: Date.now() } });
         commit('SET_ORDERS', response.data.orders);
         commit('SET_ORDER_SUMMARY', response.data.summary);
       } catch (err) {
@@ -224,9 +270,8 @@ export default new Vuex.Store({
       }
     },
 
-    // 5. Mengambil Data Cashflow berdasarkan filter bulan (Server-Side)
     async fetchCashflows({ commit }, month = null) {
-      const params = month ? { month } : {};
+      const params = month ? { month, _t: Date.now() } : { _t: Date.now() };
       const res = await apiClient.get('/cashflows', { params });
       const extracted = extractData(res);
 
@@ -237,7 +282,6 @@ export default new Vuex.Store({
       }
     },
 
-    // 6. CRUD Produk, Bahan Baku, Cashflow, Promo, & Pengaturan ke Database
     async createProduct({ commit }, payload) {
       const res = await apiClient.post('/products', payload);
       commit('ADD_PRODUCT', extractData(res));
